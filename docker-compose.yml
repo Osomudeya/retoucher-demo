@@ -1,0 +1,113 @@
+# docker-compose.yml - Fixed version for better WSL compatibility
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:13-alpine
+    container_name: retoucherirving-db
+    environment:
+      POSTGRES_DB: webapp
+      POSTGRES_USER: adminuser
+      POSTGRES_PASSWORD: localdevpassword
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=en_US.UTF-8 --lc-ctype=en_US.UTF-8"
+    # ports:
+    #   - "5433:5432"  # Only expose if you need external access
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Only mount init.sql if it exists
+      - ./app/backend/database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - retoucherirving-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U adminuser -d webapp"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend API
+  backend:
+    build: 
+      context: ./app/backend
+      dockerfile: Dockerfile.dev
+    container_name: retoucherirving-backend
+    environment:
+      NODE_ENV: development
+      PORT: 3001
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: webapp
+      DB_USER: adminuser
+      DB_PASSWORD: localdevpassword
+      DB_SSL: "false"
+      LOG_LEVEL: debug
+      ADMIN_KEY: local-admin-key-123
+    ports:
+      - "3001:3001"  # Expose backend port
+    volumes:
+      - ./app/backend:/usr/src/app
+      - /usr/src/app/node_modules  # Anonymous volume for node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - retoucherirving-network
+    command: ["sh", "-c", "npm install && npm run dev"]
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/health", "||", "exit", "1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Frontend React App
+  frontend:
+    build: 
+      context: ./app/frontend
+      dockerfile: Dockerfile.dev
+    container_name: retoucherirving-frontend
+    environment:
+      REACT_APP_API_URL: http://localhost:3001
+      # Enable polling for Windows/WSL
+      CHOKIDAR_USEPOLLING: "true"
+      # Disable automatic browser opening
+      BROWSER: none
+      HOST: 0.0.0.0
+    ports:
+      - "3000:3000"  # Expose frontend port
+    volumes:
+      - ./app/frontend:/app
+      - /app/node_modules  # Anonymous volume for node_modules
+    depends_on:
+      - backend
+    networks:
+      - retoucherirving-network
+    stdin_open: true
+    tty: true
+    command: ["sh", "-c", "npm install && npm start"]
+
+  # Nginx Reverse Proxy (optional)
+  nginx:
+    image: nginx:alpine
+    container_name: retoucherirving-nginx
+    ports:
+      - "8080:80"
+    volumes:
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - retoucherirving-network
+    profiles:
+      - full-stack
+
+networks:
+  retoucherirving-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  postgres_data:

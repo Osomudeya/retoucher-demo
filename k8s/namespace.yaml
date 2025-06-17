@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: retoucherirving
+  labels:
+    name: retoucherirving
+    environment: production
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: retoucherirving-quota
+  namespace: retoucherirving
+spec:
+  hard:
+    requests.cpu: "2"
+    requests.memory: 4Gi
+    limits.cpu: "4"
+    limits.memory: 8Gi
+    pods: "10"
+    services: "5"

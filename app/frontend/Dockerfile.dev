@@ -1,0 +1,37 @@
+FROM node:18-alpine
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm install
+
+COPY . .
+EXPOSE 3000
+CMD ["npm", "start"]
+
+# FROM node:18-alpine
+
+# WORKDIR /app
+
+# # Copy package files
+# COPY package*.json ./
+
+# # Install dependencies
+# RUN npm install
+
+# # Create non-root user
+# RUN addgroup -g 1001 -S nodejs && \
+#     adduser -S reactuser -u 1001
+
+# # Copy app source
+# COPY . .
+
+# # Change ownership to non-root user
+# RUN chown -R reactuser:nodejs /app
+# USER reactuser
+
+# # Expose port
+# EXPOSE 3005
+
+# # Start the application
+# CMD ["npm", "start"]

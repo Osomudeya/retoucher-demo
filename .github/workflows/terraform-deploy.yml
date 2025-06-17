@@ -1,0 +1,102 @@
+name: Deploy Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Terraform action to perform'
+        required: true
+        default: 'apply'
+        type: choice
+        options:
+        - apply
+        - plan
+  push:
+    branches:
+      - main
+    paths:
+      - 'terraform/**'
+
+env:
+  TF_VERSION: '1.5.0'
+  ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+  ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+  ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+
+jobs:
+  terraform:
+    name: 'Terraform'
+    runs-on: ubuntu-latest
+    environment: production
+    
+    defaults:
+      run:
+        shell: bash
+        working-directory: ./terraform
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v2
+      with:
+        terraform_version: ${{ env.TF_VERSION }}
+
+    - name: Terraform Format Check
+      run: terraform fmt -check -recursive
+
+    - name: Terraform Init
+      run: |
+        terraform init \
+          -backend-config="resource_group_name=${{ secrets.TF_STATE_RESOURCE_GROUP }}" \
+          -backend-config="storage_account_name=${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" \
+          -backend-config="container_name=${{ secrets.TF_STATE_CONTAINER }}" \
+          -backend-config="key=${{ secrets.TF_STATE_KEY }}"
+
+    - name: Terraform Validate
+      run: terraform validate
+
+    - name: Terraform Plan
+      run: |
+        terraform plan \
+          -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+          -var="database_admin_password=${{ secrets.DATABASE_ADMIN_PASSWORD }}" \
+          -out=tfplan
+      env:
+        TF_VAR_environment: "production"
+        TF_VAR_project_name: "retoucherirving"
+
+    - name: Upload Plan Artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: terraform-plan
+        path: terraform/tfplan
+
+    - name: Terraform Apply
+      if: github.event.inputs.action == 'apply' || (github.ref == 'refs/heads/main' && github.event_name == 'push')
+      run: terraform apply -auto-approve tfplan
+
+    - name: Terraform Output
+      if: github.event.inputs.action == 'apply' || (github.ref == 'refs/heads/main' && github.event_name == 'push')
+      run: |
+        echo "## Terraform Outputs" >> $GITHUB_STEP_SUMMARY
+        terraform output -json | jq -r 'to_entries[] | "- **\(.key)**: \(.value.value)"' >> $GITHUB_STEP_SUMMARY
+
+    - name: Save Outputs to GitHub Secrets
+      if: github.event.inputs.action == 'apply' || (github.ref == 'refs/heads/main' && github.event_name == 'push')
+      run: |
+        echo "RESOURCE_GROUP_NAME=$(terraform output -raw resource_group_name)" >> $GITHUB_OUTPUT
+        echo "AKS_CLUSTER_NAME=$(terraform output -raw aks_cluster_name)" >> $GITHUB_OUTPUT
+        echo "ACR_LOGIN_SERVER=$(terraform output -raw container_registry_login_server)" >> $GITHUB_OUTPUT
+        echo "JUMP_SERVER_IP=$(terraform output -raw jump_server_public_ip)" >> $GITHUB_OUTPUT
+        echo "DATABASE_FQDN=$(terraform output -raw database_fqdn)" >> $GITHUB_OUTPUT
+      id: tf_outputs
+
+    outputs:
+      resource_group_name: ${{ steps.tf_outputs.outputs.RESOURCE_GROUP_NAME }}
+      aks_cluster_name: ${{ steps.tf_outputs.outputs.AKS_CLUSTER_NAME }}
+      acr_login_server: ${{ steps.tf_outputs.outputs.ACR_LOGIN_SERVER }}
+      jump_server_ip: ${{ steps.tf_outputs.outputs.JUMP_SERVER_IP }}
+      database_fqdn: ${{ steps.tf_outputs.outputs.DATABASE_FQDN }}

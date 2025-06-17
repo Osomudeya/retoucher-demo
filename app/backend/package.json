@@ -1,0 +1,27 @@
+{
+    "name": "retoucherirving-backend",
+    "version": "1.0.0",
+    "description": "Backend API for Retoucher Irving website",
+    "main": "server.js",
+    "scripts": {
+      "start": "node server.js",
+      "dev": "nodemon server.js --watch . --ext js",
+      "test": "jest",
+      "debug": "node --inspect=0.0.0.0:9229 server.js"
+    },
+    "dependencies": {
+      "express": "^4.18.2",
+      "cors": "^2.8.5",
+      "helmet": "^6.0.1",
+      "pg": "^8.8.0",
+      "winston": "^3.8.2",
+      "dotenv": "^16.0.3"
+    },
+    "devDependencies": {
+      "nodemon": "^2.0.20",
+      "jest": "^29.3.1"
+    },
+    "engines": {
+      "node": ">=18.0.0"
+    }
+  }

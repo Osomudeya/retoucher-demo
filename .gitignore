@@ -1,0 +1,26 @@
+# Backend config
+backend.conf
+
+# Terraform sensitive files
+terraform.tfvars
+*.tfstate
+*.tfstate.backup
+.terraform/
+
+# Node modules
+**/node_modules/
+
+# Env files
+.env
+**/.env
+
+# Dockerignore
+**/.dockerignore
+
+# Logs
+*.log
+logs/
+
+# OS junk
+.DS_Store
+Thumbs.db

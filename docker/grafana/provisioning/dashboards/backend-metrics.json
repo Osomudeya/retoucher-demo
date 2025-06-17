@@ -1,0 +1,54 @@
+{
+    "dashboard": {
+      "id": null,
+      "uid": "backend-metrics",
+      "title": "Backend Service Metrics",
+      "timezone": "browser",
+      "schemaVersion": 22,
+      "version": 1,
+      "refresh": "5s",
+      "panels": [
+        {
+          "type": "graph",
+          "title": "HTTP Requests Total",
+          "targets": [
+            {
+              "expr": "sum(rate(http_requests_total[1m]))",
+              "legendFormat": "HTTP Requests",
+              "refId": "A"
+            }
+          ],
+          "datasource": "Prometheus",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 }
+        },
+        {
+          "type": "graph",
+          "title": "Memory Usage",
+          "targets": [
+            {
+              "expr": "process_resident_memory_bytes",
+              "legendFormat": "Memory Usage",
+              "refId": "B"
+            }
+          ],
+          "datasource": "Prometheus",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 9 }
+        },
+        {
+          "type": "graph",
+          "title": "CPU Usage",
+          "targets": [
+            {
+              "expr": "process_cpu_seconds_total",
+              "legendFormat": "CPU Usage",
+              "refId": "C"
+            }
+          ],
+          "datasource": "Prometheus",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 18 }
+        }
+      ]
+    },
+    "overwrite": true
+  }
+  

@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: retoucherirving
+data:
+  NODE_ENV: "production"
+  PORT: "3001"
+  FRONTEND_PORT: "80"
+  DB_PORT: "5432"
+  DB_SSL: "true"
+  LOG_LEVEL: "info"
+  # Frontend configuration
+  REACT_APP_API_URL: "https://retoucherirving.com/api"

@@ -1,0 +1,137 @@
+name: Deploy Application
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'app/**'
+      - 'k8s/**'
+      - '.github/workflows/app-deploy.yml'
+
+env:
+  REGISTRY: ${{ secrets.ACR_LOGIN_SERVER }}
+  IMAGE_TAG: ${{ github.sha }}
+
+jobs:
+  build-and-push:
+    name: Build and Push Images
+    runs-on: ubuntu-latest
+    outputs:
+      image-tag: ${{ env.IMAGE_TAG }}
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Login to Azure Container Registry
+      uses: azure/docker-login@v1
+      with:
+        login-server: ${{ secrets.ACR_LOGIN_SERVER }}
+        username: ${{ secrets.ACR_USERNAME }}
+        password: ${{ secrets.ACR_PASSWORD }}
+
+    - name: Build and Push Backend Image
+      run: |
+        cd app/backend
+        docker build -t ${{ env.REGISTRY }}/retoucherirving/backend:${{ env.IMAGE_TAG }} .
+        docker build -t ${{ env.REGISTRY }}/retoucherirving/backend:latest .
+        docker push ${{ env.REGISTRY }}/retoucherirving/backend:${{ env.IMAGE_TAG }}
+        docker push ${{ env.REGISTRY }}/retoucherirving/backend:latest
+
+    - name: Build and Push Frontend Image
+      run: |
+        cd app/frontend
+        docker build -t ${{ env.REGISTRY }}/retoucherirving/frontend:${{ env.IMAGE_TAG }} .
+        docker build -t ${{ env.REGISTRY }}/retoucherirving/frontend:latest .
+        docker push ${{ env.REGISTRY }}/retoucherirving/frontend:${{ env.IMAGE_TAG }}
+        docker push ${{ env.REGISTRY }}/retoucherirving/frontend:latest
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Run Snyk to check Docker images for vulnerabilities
+      uses: snyk/actions/docker@master
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      with:
+        image: ${{ env.REGISTRY }}/retoucherirving/backend:${{ env.IMAGE_TAG }}
+        args: --severity-threshold=high
+
+    - name: Run SonarQube Scan
+      uses: sonarqube-quality-gate-action@master
+      env:
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  deploy:
+    name: Deploy to AKS
+    runs-on: ubuntu-latest
+    needs: [build-and-push, security-scan]
+    environment: production
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup SSH Key
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+        chmod 600 ~/.ssh/id_rsa
+        ssh-keyscan -H ${{ secrets.JUMP_SERVER_IP }} >> ~/.ssh/known_hosts
+
+    - name: Deploy to AKS via Jump Server
+      run: |
+        # Copy ALL files to jump server
+        scp -r k8s/ azureuser@${{ secrets.JUMP_SERVER_IP }}:~/
+        scp -r scripts/ azureuser@${{ secrets.JUMP_SERVER_IP }}:~/
+        
+        # Execute deployment on jump server
+        ssh azureuser@${{ secrets.JUMP_SERVER_IP }} << 'EOF'
+          # STEP 1: Setup jump server (install tools)
+          echo "🛠️ Setting up jump server tools..."
+          chmod +x scripts/*.sh
+          ./scripts/setup-jump-server.sh
+          
+          # STEP 2: Set environment variables
+          export RESOURCE_GROUP_NAME="${{ secrets.RESOURCE_GROUP_NAME }}"
+          export AKS_CLUSTER_NAME="${{ secrets.AKS_CLUSTER_NAME }}"
+          export ACR_LOGIN_SERVER="${{ secrets.ACR_LOGIN_SERVER }}"
+          export ACR_USERNAME="${{ secrets.ACR_USERNAME }}"
+          export ACR_PASSWORD="${{ secrets.ACR_PASSWORD }}"
+          export IMAGE_TAG="${{ env.IMAGE_TAG }}"
+          export DB_HOST="${{ secrets.DATABASE_FQDN }}"
+          export DB_PASSWORD="${{ secrets.DATABASE_ADMIN_PASSWORD }}"
+          export APP_INSIGHTS_KEY="${{ secrets.APPLICATION_INSIGHTS_INSTRUMENTATION_KEY }}"
+          export CLOUDFLARE_API_KEY="${{ secrets.CLOUDFLARE_API_KEY }}"
+          export ARM_CLIENT_ID="${{ secrets.ARM_CLIENT_ID }}"
+          export ARM_CLIENT_SECRET="${{ secrets.ARM_CLIENT_SECRET }}"
+          export ARM_TENANT_ID="${{ secrets.ARM_TENANT_ID }}"
+          
+          # STEP 3: Run deployment
+          echo "🚀 Starting application deployment..."
+          ./scripts/deploy-to-aks.sh
+        EOF
+
+    - name: Verify Deployment
+      run: |
+        ssh azureuser@${{ secrets.JUMP_SERVER_IP }} << 'EOF'
+          kubectl get pods -n retoucherirving
+          kubectl get services -n retoucherirving
+          kubectl get ingress -n retoucherirving
+        EOF
+
+    - name: Deployment Summary
+      run: |
+        echo "## 🚀 Deployment Successful" >> $GITHUB_STEP_SUMMARY
+        echo "- Backend Image: \`${{ env.REGISTRY }}/retoucherirving/backend:${{ env.IMAGE_TAG }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "- Frontend Image: \`${{ env.REGISTRY }}/retoucherirving/frontend:${{ env.IMAGE_TAG }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "- Website: https://retoucherirving.com" >> $GITHUB_STEP_SUMMARY
+        echo "- Jump Server: ${{ secrets.JUMP_SERVER_IP }}" >> $GITHUB_STEP_SUMMARY

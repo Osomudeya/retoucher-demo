@@ -1,0 +1,45 @@
+variable "resource_group_name" {
+  description = "Name of the resource group"
+  type        = string
+}
+
+variable "location" {
+  description = "Azure region"
+  type        = string
+}
+
+variable "subnet_id" {
+  description = "ID of the subnet for jump server"
+  type        = string
+}
+
+variable "environment" {
+  description = "Environment name"
+  type        = string
+}
+
+variable "project_name" {
+  description = "Project name"
+  type        = string
+}
+
+variable "resource_suffix" {
+  description = "Resource suffix for unique naming"
+  type        = string
+}
+
+variable "admin_username" {
+  description = "Admin username for the jump server"
+  type        = string
+}
+
+variable "ssh_public_key" {
+  description = "SSH public key for authentication"
+  type        = string
+}
+
+variable "tags" {
+  description = "Tags to apply to resources"
+  type        = map(string)
+  default     = {}
+}
