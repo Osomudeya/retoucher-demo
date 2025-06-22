@@ -3,40 +3,40 @@
 # Log Analytics Workspace
 resource "azurerm_log_analytics_workspace" "main" {
   name                = "law-${var.project_name}-${var.environment}-${var.resource_suffix}"
-  location           = var.location
+  location            = var.location
   resource_group_name = var.resource_group_name
-  sku                = "PerGB2018"
-  retention_in_days  = 30
-  tags              = var.tags
+  sku                 = "PerGB2018"
+  retention_in_days   = 30
+  tags                = var.tags
 }
 
 # Application Insights
 resource "azurerm_application_insights" "main" {
   name                = "appi-${var.project_name}-${var.environment}-${var.resource_suffix}"
-  location           = var.location
+  location            = var.location
   resource_group_name = var.resource_group_name
-  workspace_id       = azurerm_log_analytics_workspace.main.id
-  application_type   = "web"
-  tags              = var.tags
+  workspace_id        = azurerm_log_analytics_workspace.main.id
+  application_type    = "web"
+  tags                = var.tags
 }
 
 # Azure Managed Grafana - FIXED VERSION
 resource "azurerm_dashboard_grafana" "main" {
-  name                              = "grafana-${var.resource_suffix}"
-  resource_group_name               = var.resource_group_name
-  location                         = var.location
-  
+  name                = "grafana-${var.resource_suffix}"
+  resource_group_name = var.resource_group_name
+  location            = var.location
+
   # FIXED: Use version 10 instead of 9
-  grafana_major_version            = "10"
-  
-  api_key_enabled                  = true
+  grafana_major_version = "10"
+
+  api_key_enabled                   = true
   deterministic_outbound_ip_enabled = true
-  public_network_access_enabled    = true
-  
+  public_network_access_enabled     = true
+
   identity {
     type = "SystemAssigned"
   }
-  
+
   tags = var.tags
 }
 
@@ -55,12 +55,12 @@ resource "azurerm_monitor_action_group" "main" {
   name                = "actiongroup-${var.project_name}-${var.environment}"
   resource_group_name = var.resource_group_name
   short_name          = "webapp-ag"
-  
+
   email_receiver {
     name          = "admin"
     email_address = "admin@${var.project_name}.com"
   }
-  
+
   tags = var.tags
 }
 
@@ -119,12 +119,12 @@ resource "azurerm_monitor_action_group" "main" {
 #   name                = "actiongroup-${var.project_name}-${var.environment}"
 #   resource_group_name = var.resource_group_name
 #   short_name          = "webapp-ag"
-  
+
 #   email_receiver {
 #     name          = "admin"
 #     email_address = "admin@${var.project_name}.com"
 #   }
-  
+
 #   tags = var.tags
 # }
 
@@ -135,24 +135,24 @@ resource "azurerm_monitor_action_group" "main" {
 #   resource_group_name = var.resource_group_name
 #   scopes              = [var.aks_cluster_id]  # We need to pass this from main.tf
 #   description         = "Alert when AKS CPU usage is high"
-  
+
 #   criteria {
 #     metric_namespace = "Microsoft.ContainerService/managedClusters"
 #     metric_name      = "node_cpu_usage_percentage"
 #     aggregation      = "Average"
 #     operator         = "GreaterThan"
 #     threshold        = 80
-    
+
 #     dimension {
 #       name     = "node"
 #       operator = "Include"
 #       values   = ["*"]
 #     }
 #   }
-  
+
 #   action {
 #     action_group_id = azurerm_monitor_action_group.main.id
 #   }
-  
+
 #   tags = var.tags
 # }

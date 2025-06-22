@@ -1,17 +1,17 @@
 # Public IP for Jump Server
 resource "azurerm_public_ip" "jump_server" {
   name                = "pip-jumpserver-${var.project_name}-${var.environment}-${var.resource_suffix}"
-  location           = var.location
+  location            = var.location
   resource_group_name = var.resource_group_name
-  allocation_method  = "Static"
-  sku               = "Standard"
-  tags             = var.tags
+  allocation_method   = "Static"
+  sku                 = "Standard"
+  tags                = var.tags
 }
 
 # Network Interface for Jump Server
 resource "azurerm_network_interface" "jump_server" {
   name                = "nic-jumpserver-${var.project_name}-${var.environment}-${var.resource_suffix}"
-  location           = var.location
+  location            = var.location
   resource_group_name = var.resource_group_name
 
   ip_configuration {
@@ -27,9 +27,9 @@ resource "azurerm_network_interface" "jump_server" {
 # Jump Server Virtual Machine
 resource "azurerm_linux_virtual_machine" "jump_server" {
   name                = "vm-jumpserver-${var.project_name}-${var.environment}-${var.resource_suffix}"
-  location           = var.location
+  location            = var.location
   resource_group_name = var.resource_group_name
-  size                = "Standard_B1s"  # Smallest size for cost optimization
+  size                = "Standard_B1s" # Smallest size for cost optimization
   admin_username      = var.admin_username
 
   # Disable password authentication, use SSH keys only
@@ -57,9 +57,9 @@ resource "azurerm_linux_virtual_machine" "jump_server" {
   }
 
   # Custom script to install required tools
-custom_data = base64encode(templatefile("${path.root}/../scripts/setup-jump-server.sh", {
-  admin_username = var.admin_username
-}))
+  custom_data = base64encode(templatefile("${path.root}/../scripts/setup-jump-server.sh", {
+    admin_username = var.admin_username
+  }))
 
   tags = var.tags
 }

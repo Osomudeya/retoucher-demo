@@ -4,7 +4,7 @@
 resource "azurerm_private_dns_zone" "postgres" {
   name                = "privatelink.postgres.database.azure.com"
   resource_group_name = var.resource_group_name
-  tags               = var.tags
+  tags                = var.tags
 }
 
 # Link DNS zone to Spoke VNet
@@ -13,39 +13,39 @@ resource "azurerm_private_dns_zone_virtual_network_link" "postgres" {
   resource_group_name   = var.resource_group_name
   private_dns_zone_name = azurerm_private_dns_zone.postgres.name
   virtual_network_id    = var.vnet_id
-  tags                 = var.tags
+  tags                  = var.tags
 }
 
 
 resource "azurerm_postgresql_flexible_server" "main" {
-  name                   = "psql-${var.project_name}-${var.environment}-${var.resource_suffix}"
-  resource_group_name    = var.resource_group_name
-  location              = var.location
-  version               = "13"
-  
-  delegated_subnet_id   = var.subnet_id
-  private_dns_zone_id   = azurerm_private_dns_zone.postgres.id
-  
-  administrator_login    = var.admin_username
-  administrator_password = var.admin_password
+  name                = "psql-${var.project_name}-${var.environment}-${var.resource_suffix}"
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  version             = "13"
+
+  delegated_subnet_id = var.subnet_id
+  private_dns_zone_id = azurerm_private_dns_zone.postgres.id
+
+  administrator_login           = var.admin_username
+  administrator_password        = var.admin_password
   public_network_access_enabled = false
-  
-  storage_mb = 32768
-  sku_name   = "B_Standard_B1ms"
+
+  storage_mb            = 32768
+  sku_name              = "B_Standard_B1ms"
   backup_retention_days = 7
-  
+
   # high_availability {
   #   mode                      = "ZoneRedundant"
   #   standby_availability_zone = "2"
   # }
-  
+
   tags = var.tags
-  
-   depends_on = [
+
+  depends_on = [
     azurerm_private_dns_zone_virtual_network_link.postgres,
     azurerm_subnet.database
   ]
-  
+
   timeouts {
     create = "30m"
     update = "30m"
@@ -60,25 +60,25 @@ resource "azurerm_postgresql_flexible_server" "main" {
 #   resource_group_name    = var.resource_group_name
 #   location              = var.location
 #   version               = "13"
-  
+
 #   # VNet Integration (secure private access)
 #   delegated_subnet_id   = var.subnet_id
 #   private_dns_zone_id   = azurerm_private_dns_zone.postgres.id
-  
+
 #   administrator_login    = var.admin_username
 #   administrator_password = var.admin_password
-  
+
 #   # No public access (secure)
 #   public_network_access_enabled = false
-  
+
 #   storage_mb = 32768  # 32 GB
 #   sku_name   = "B_Standard_B1ms"  # Burstable tier
-  
+
 #   backup_retention_days = 7
 #   # Remove geo_redundant_backup_enabled - not supported on B tier
-  
+
 #   tags = var.tags
-  
+
 #   depends_on = [azurerm_private_dns_zone_virtual_network_link.postgres]
 # }
 
@@ -88,10 +88,10 @@ resource "azurerm_postgresql_flexible_server_database" "webapp" {
   server_id = azurerm_postgresql_flexible_server.main.id
   collation = "en_US.utf8"
   charset   = "utf8"
-  
+
   # Explicit dependency + timeout
   depends_on = [azurerm_postgresql_flexible_server.main]
-  
+
   timeouts {
     create = "15m"
     delete = "15m"
@@ -143,13 +143,13 @@ resource "azurerm_postgresql_flexible_server_database" "webapp" {
 #   administrator_login    = var.admin_username
 #   administrator_password = var.admin_password
 #   public_network_access_enabled = false
-  
+
 #   storage_mb = 32768  # 32 GB
 #   sku_name   = "B_Standard_B1ms"  # Burstable tier for cost optimization
-  
+
 #   backup_retention_days = 7
 #   geo_redundant_backup_enabled = true
-  
+
 #   tags = var.tags
 
 #   depends_on = [azurerm_private_dns_zone_virtual_network_link.postgres]
