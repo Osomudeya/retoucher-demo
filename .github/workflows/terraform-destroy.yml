@@ -27,7 +27,11 @@ jobs:
         working-directory: ./terraform
 
     steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
     - name: Validate Destruction Confirmation
+      working-directory: .
       run: |
         if [ "${{ github.event.inputs.confirm_destroy }}" != "DESTROY" ]; then
           echo "❌ Destruction not confirmed. You must type 'DESTROY' exactly."
@@ -35,13 +39,11 @@ jobs:
         fi
         echo "✅ Destruction confirmed"
 
-    - name: Checkout
-      uses: actions/checkout@v4
-
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v2
       with:
         terraform_version: ${{ env.TF_VERSION }}
+        terraform_wrapper: false
 
     - name: Terraform Init
       run: |
