@@ -130,6 +130,10 @@ kubectl create secret generic app-secrets \
     --from-literal=ADMIN_KEY="$(openssl rand -base64 32)" \
     --dry-run=client -o yaml | kubectl apply -f -
 
+echo "🗄️ Initializing database..."
+DB_INIT_POD=$(kubectl get pods -n retoucherirving -l app=backend -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -n retoucherirving $DB_INIT_POD -- npm run db:migrate || echo "Database already initialized"
+
 # Create Cloudflare API secret for SSL certificates
 echo "🌤️ Creating Cloudflare API secret..."
 kubectl create secret generic cloudflare-api-key \
