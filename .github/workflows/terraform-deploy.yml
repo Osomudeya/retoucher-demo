@@ -80,11 +80,63 @@ jobs:
       if: github.event.inputs.action == 'apply' || (github.ref == 'refs/heads/main' && github.event_name == 'push')
       run: terraform apply -auto-approve tfplan
 
+    - name: Azure Login
+      if: github.event.inputs.action == 'apply' || (github.ref == 'refs/heads/main' && github.event_name == 'push')
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
     - name: Terraform Output
       if: github.event.inputs.action == 'apply' || (github.ref == 'refs/heads/main' && github.event_name == 'push')
       run: |
         echo "## Terraform Outputs" >> $GITHUB_STEP_SUMMARY
-        terraform output -json | jq -r 'to_entries[] | "- **\(.key)**: \(.value.value)"' >> $GITHUB_STEP_SUMMARY
+        echo "- **Resource Group**: $(terraform output -raw resource_group_name)" >> $GITHUB_STEP_SUMMARY
+        echo "- **AKS Cluster**: $(terraform output -raw aks_cluster_name)" >> $GITHUB_STEP_SUMMARY
+        echo "- **ACR Login Server**: $(terraform output -raw container_registry_login_server)" >> $GITHUB_STEP_SUMMARY
+        echo "- **Jump Server IP**: $(terraform output -raw jump_server_public_ip)" >> $GITHUB_STEP_SUMMARY
+        echo "- **Database FQDN**: $(terraform output -raw database_fqdn)" >> $GITHUB_STEP_SUMMARY
+
+    - name: Create Role Assignments
+      if: github.event.inputs.action == 'apply' || (github.ref == 'refs/heads/main' && github.event_name == 'push')
+      run: |
+        echo "🔗 Creating role assignments..."
+        
+        # Get values from Terraform outputs
+        RESOURCE_GROUP=$(terraform output -raw resource_group_name)
+        AKS_CLUSTER=$(terraform output -raw aks_cluster_name)
+        ACR_LOGIN_SERVER=$(terraform output -raw container_registry_login_server)
+        
+        # Extract ACR name and build resource ID
+        ACR_NAME=$(echo $ACR_LOGIN_SERVER | cut -d'.' -f1)
+        ACR_ID="/subscriptions/${{ env.ARM_SUBSCRIPTION_ID }}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.ContainerRegistry/registries/${ACR_NAME}"
+        
+        # Get AKS kubelet identity
+        KUBELET_IDENTITY=$(az aks show \
+          --resource-group $RESOURCE_GROUP \
+          --name $AKS_CLUSTER \
+          --query "identityProfile.kubeletidentity.objectId" -o tsv)
+        
+        # Create AKS -> ACR role assignment
+        az role assignment create \
+          --assignee $KUBELET_IDENTITY \
+          --role "AcrPull" \
+          --scope $ACR_ID \
+          --only-show-errors || echo "⚠️ AKS->ACR role assignment exists"
+        
+        # Get Grafana identity and create role assignment
+        GRAFANA_IDENTITY=$(az grafana list \
+          --resource-group $RESOURCE_GROUP \
+          --query "[0].identity.principalId" -o tsv 2>/dev/null || echo "")
+        
+        if [ ! -z "$GRAFANA_IDENTITY" ]; then
+          az role assignment create \
+            --assignee $GRAFANA_IDENTITY \
+            --role "Monitoring Reader" \
+            --scope "/subscriptions/${{ env.ARM_SUBSCRIPTION_ID }}" \
+            --only-show-errors || echo "⚠️ Grafana role assignment exists"
+        fi
+        
+        echo "✅ Role assignments completed"
 
     - name: Save Outputs to GitHub Secrets
       if: github.event.inputs.action == 'apply' || (github.ref == 'refs/heads/main' && github.event_name == 'push')

@@ -56,25 +56,25 @@ resource "azurerm_role_assignment" "grafana_reader" {
 }
 
 # Fallback: Create role assignment via Azure CLI
-resource "terraform_data" "grafana_role_fallback" {
-  count = var.create_role_assignments ? 0 : 1
+# resource "terraform_data" "grafana_role_fallback" {
+#   count = var.create_role_assignments ? 0 : 1
   
-  triggers_replace = {
-    grafana_id = azurerm_dashboard_grafana.main.id
-    subscription_id = data.azurerm_client_config.current.subscription_id
-  }
+#   triggers_replace = {
+#     grafana_id = azurerm_dashboard_grafana.main.id
+#     subscription_id = data.azurerm_client_config.current.subscription_id
+#   }
 
-  provisioner "local-exec" {
-    command = <<-EOT
-      echo "🔗 Creating Grafana role assignment via Azure CLI..."
-      az role assignment create \
-        --assignee ${azurerm_dashboard_grafana.main.identity[0].principal_id} \
-        --role "Monitoring Reader" \
-        --scope "/subscriptions/${data.azurerm_client_config.current.subscription_id}" \
-        --only-show-errors || echo "⚠️ Role assignment failed or already exists"
-    EOT
-  }
-}
+#   provisioner "local-exec" {
+#     command = <<-EOT
+#       echo "🔗 Creating Grafana role assignment via Azure CLI..."
+#       az role assignment create \
+#         --assignee ${azurerm_dashboard_grafana.main.identity[0].principal_id} \
+#         --role "Monitoring Reader" \
+#         --scope "/subscriptions/${data.azurerm_client_config.current.subscription_id}" \
+#         --only-show-errors || echo "⚠️ Role assignment failed or already exists"
+#     EOT
+#   }
+# }
 
 # Action Group for alerts
 resource "azurerm_monitor_action_group" "main" {

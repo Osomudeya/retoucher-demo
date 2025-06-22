@@ -75,24 +75,11 @@ resource "azurerm_role_assignment" "aks_acr_conditional" {
   skip_service_principal_aad_check = true
 }
 
-# Approach 3: Use null_resource for error handling
-resource "null_resource" "aks_acr_fallback" {
-  depends_on = [azurerm_kubernetes_cluster.main]
+# # Approach 3: Use null_resource for error handling
+# resource "null_resource" "aks_acr_fallback" {
+#   depends_on = [azurerm_kubernetes_cluster.main]
   
-  triggers = {
-    cluster_id = azurerm_kubernetes_cluster.main.id
-    acr_id     = var.container_registry_id
-  }
-
-  provisioner "local-exec" {
-    command = <<-EOT
-      echo "Attempting to create ACR role assignment..."
-      az role assignment create \
-        --assignee ${azurerm_kubernetes_cluster.main.kubelet_identity[0].object_id} \
-        --role "AcrPull" \
-        --scope ${var.container_registry_id} || echo "Role assignment failed or already exists - continuing..."
-    EOT
-    
-    on_failure = continue  # Don't fail if this doesn't work
-  }
-}
+#   triggers = {
+#     cluster_id = azurerm_kubernetes_cluster.main.id
+#     acr_id     = var.container_registry_id
+  # }
