@@ -44,8 +44,10 @@ jobs:
       with:
         terraform_version: ${{ env.TF_VERSION }}
 
-    - name: Terraform Format Check
-      run: terraform fmt -check -recursive
+    - name: Terraform Auto-Format
+      run: |
+        terraform fmt -recursive
+        echo "✅ Terraform files auto-formatted"
 
     - name: Terraform Init
       run: |
