@@ -59,3 +59,9 @@ variable "database_admin_password" {
   type        = string
   sensitive   = true
 }
+
+variable "create_role_assignments" {
+  description = "Whether to create role assignments via Terraform (requires User Access Administrator permissions)"
+  type        = bool
+  default     = false  # Default to false to avoid permission issues
+}

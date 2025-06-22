@@ -99,6 +99,7 @@ module "aks" {
   vm_size                    = var.aks_vm_size
   container_registry_id      = azurerm_container_registry.main.id
   log_analytics_workspace_id = module.monitoring.log_analytics_workspace_id
+  create_role_assignments    = var.create_role_assignments  # NEW
   tags                       = local.common_tags
 }
 
@@ -122,12 +123,13 @@ module "database" {
 module "monitoring" {
   source = "./modules/monitoring"
 
-  resource_group_name = azurerm_resource_group.main.name
-  location            = azurerm_resource_group.main.location
-  environment         = var.environment
-  project_name        = var.project_name
-  resource_suffix     = local.resource_suffix
-  tags                = local.common_tags
+  resource_group_name     = azurerm_resource_group.main.name
+  location                = azurerm_resource_group.main.location
+  environment             = var.environment
+  project_name            = var.project_name
+  resource_suffix         = local.resource_suffix
+  create_role_assignments = var.create_role_assignments  # NEW
+  tags                    = local.common_tags
 }
 
 # Azure CDN Profile

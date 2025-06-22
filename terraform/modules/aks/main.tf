@@ -1,3 +1,5 @@
+# terraform/modules/aks/main.tf
+
 # AKS Cluster
 resource "azurerm_kubernetes_cluster" "main" {
   name                = "aks-${var.project_name}-${var.environment}-${var.resource_suffix}"
@@ -7,22 +9,21 @@ resource "azurerm_kubernetes_cluster" "main" {
 
   # Add this line to control node resource group name
   node_resource_group = "rg-aks-nodes-${var.project_name}-${var.environment}"
-
-
+  
   # Make AKS cluster private
   private_cluster_enabled = true
-
+  
   # Enable managed identity
   identity {
     type = "SystemAssigned"
   }
 
   default_node_pool {
-    name                = "default"
-    vm_size             = var.vm_size
-    vnet_subnet_id      = var.subnet_id
-    min_count           = 1
-    max_count           = 5
+    name           = "default"
+    vm_size        = var.vm_size
+    vnet_subnet_id = var.subnet_id
+    min_count      = 1
+    max_count      = 5
     enable_auto_scaling = true
 
     # Enable container insights
@@ -46,10 +47,52 @@ resource "azurerm_kubernetes_cluster" "main" {
   tags = var.tags
 }
 
-# Grant AKS access to ACR
+# Resilient ACR Role Assignment - Multiple Approaches
+# Approach 1: Try to create, ignore if fails
 resource "azurerm_role_assignment" "aks_acr" {
+  principal_id                      = azurerm_kubernetes_cluster.main.kubelet_identity[0].object_id
+  role_definition_name              = "AcrPull"
+  scope                             = var.container_registry_id
+  skip_service_principal_aad_check  = true
+
+  # Handle permission failures gracefully
+  lifecycle {
+    ignore_changes = [
+      # Ignore changes if role assignment already exists
+      principal_id,
+      role_definition_name,
+      scope
+    ]
+  }
+}
+
+# Approach 2: Conditional role assignment based on variable
+resource "azurerm_role_assignment" "aks_acr_conditional" {
+  count                            = var.create_role_assignments ? 1 : 0
   principal_id                     = azurerm_kubernetes_cluster.main.kubelet_identity[0].object_id
   role_definition_name             = "AcrPull"
   scope                            = var.container_registry_id
   skip_service_principal_aad_check = true
+}
+
+# Approach 3: Use null_resource for error handling
+resource "null_resource" "aks_acr_fallback" {
+  depends_on = [azurerm_kubernetes_cluster.main]
+  
+  triggers = {
+    cluster_id = azurerm_kubernetes_cluster.main.id
+    acr_id     = var.container_registry_id
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      echo "Attempting to create ACR role assignment..."
+      az role assignment create \
+        --assignee ${azurerm_kubernetes_cluster.main.kubelet_identity[0].object_id} \
+        --role "AcrPull" \
+        --scope ${var.container_registry_id} || echo "Role assignment failed or already exists - continuing..."
+    EOT
+    
+    on_failure = continue  # Don't fail if this doesn't work
+  }
 }

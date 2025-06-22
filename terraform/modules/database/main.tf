@@ -34,6 +34,14 @@ resource "azurerm_postgresql_flexible_server" "main" {
   sku_name              = "B_Standard_B1ms"
   backup_retention_days = 7
 
+  lifecycle {
+    ignore_changes = [
+      zone,                    # Ignore zone changes
+      high_availability,       # Ignore high availability changes
+      storage_mb              # Ignore storage changes (prevents unexpected modifications)
+    ]
+  }
+
   # high_availability {
   #   mode                      = "ZoneRedundant"
   #   standby_availability_zone = "2"
