@@ -35,5 +35,5 @@ variable "tags" {
 variable "create_role_assignments" {
   description = "Whether to create role assignments via Terraform (requires elevated permissions)"
   type        = bool
-  default     = false
+  default     = true
 }

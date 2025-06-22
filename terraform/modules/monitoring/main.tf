@@ -26,8 +26,7 @@ resource "azurerm_dashboard_grafana" "main" {
   resource_group_name               = var.resource_group_name
   location                         = var.location
   
-  # FIXED: Use version 10 instead of 9
-  grafana_major_version            = "10"
+  grafana_major_version            = "11"
   
   api_key_enabled                  = true
   deterministic_outbound_ip_enabled = true
@@ -53,6 +52,13 @@ resource "azurerm_role_assignment" "grafana_reader" {
   lifecycle {
     create_before_destroy = true
   }
+}
+
+# Add user access to Grafana (replace with your actual user ID)
+resource "azurerm_role_assignment" "grafana_user_viewer" {
+  scope                = azurerm_dashboard_grafana.main.id
+  role_definition_name = "Grafana Editor"  
+  principal_id         = "060d3bb8-cafc-4833-92c1-0e50cdcaad92"
 }
 
 # Fallback: Create role assignment via Azure CLI
