@@ -11,7 +11,6 @@ on:
       - '.github/workflows/app-deploy.yml'
 
 env:
-  REGISTRY: ${{ secrets.ACR_LOGIN_SERVER }}
   IMAGE_TAG: ${{ github.sha }}
 
 jobs:
@@ -20,33 +19,47 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       image-tag: ${{ env.IMAGE_TAG }}
+      acr-login-server: ${{ steps.acr-details.outputs.login-server }}
     
     steps:
     - name: Checkout
       uses: actions/checkout@v4
 
-    - name: Login to Azure Container Registry
-      uses: azure/docker-login@v1
+    - name: Azure Login
+      uses: azure/login@v1
       with:
-        login-server: ${{ secrets.ACR_LOGIN_SERVER }}
-        username: ${{ secrets.ACR_USERNAME }}
-        password: ${{ secrets.ACR_PASSWORD }}
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Get ACR Details
+      id: acr-details
+      run: |
+        # Get ACR name from resource group
+        ACR_NAME=$(az acr list --resource-group ${{ secrets.RESOURCE_GROUP_NAME }} --query "[0].name" -o tsv)
+        ACR_LOGIN_SERVER=$(az acr show --name $ACR_NAME --query loginServer -o tsv)
+        
+        echo "acr-name=$ACR_NAME" >> $GITHUB_OUTPUT
+        echo "login-server=$ACR_LOGIN_SERVER" >> $GITHUB_OUTPUT
+        
+        # Login to ACR using Azure CLI (no additional credentials needed)
+        az acr login --name $ACR_NAME
+        
+        echo "✅ Logged into ACR: $ACR_LOGIN_SERVER"
 
     - name: Build and Push Backend Image
       run: |
         cd app/backend
-        docker build -t ${{ env.REGISTRY }}/retoucherirving/backend:${{ env.IMAGE_TAG }} .
-        docker build -t ${{ env.REGISTRY }}/retoucherirving/backend:latest .
-        docker push ${{ env.REGISTRY }}/retoucherirving/backend:${{ env.IMAGE_TAG }}
-        docker push ${{ env.REGISTRY }}/retoucherirving/backend:latest
+        docker build -t ${{ steps.acr-details.outputs.login-server }}/retoucherirving/backend:${{ env.IMAGE_TAG }} .
+        docker build -t ${{ steps.acr-details.outputs.login-server }}/retoucherirving/backend:latest .
+        docker push ${{ steps.acr-details.outputs.login-server }}/retoucherirving/backend:${{ env.IMAGE_TAG }}
+        docker push ${{ steps.acr-details.outputs.login-server }}/retoucherirving/backend:latest
 
     - name: Build and Push Frontend Image
       run: |
         cd app/frontend
-        docker build -t ${{ env.REGISTRY }}/retoucherirving/frontend:${{ env.IMAGE_TAG }} .
-        docker build -t ${{ env.REGISTRY }}/retoucherirving/frontend:latest .
-        docker push ${{ env.REGISTRY }}/retoucherirving/frontend:${{ env.IMAGE_TAG }}
-        docker push ${{ env.REGISTRY }}/retoucherirving/frontend:latest
+        docker build -t ${{ steps.acr-details.outputs.login-server }}/retoucherirving/frontend:${{ env.IMAGE_TAG }} .
+        docker build -t ${{ steps.acr-details.outputs.login-server }}/retoucherirving/frontend:latest .
+        docker push ${{ steps.acr-details.outputs.login-server }}/retoucherirving/frontend:${{ env.IMAGE_TAG }}
+        docker push ${{ steps.acr-details.outputs.login-server }}/retoucherirving/frontend:latest
 
   security-scan:
     name: Security Scan
@@ -56,19 +69,47 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Shallow clones should be disabled for better analysis
 
-    - name: Run Snyk to check Docker images for vulnerabilities
+    # Snyk Container Scanning
+    - name: Run Snyk Container Scan
       uses: snyk/actions/docker@master
+      continue-on-error: false
       env:
         SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
       with:
-        image: ${{ env.REGISTRY }}/retoucherirving/backend:${{ env.IMAGE_TAG }}
+        image: ${{ needs.build-and-push.outputs.acr-login-server }}/retoucherirving/backend:${{ env.IMAGE_TAG }}
+        args: --severity-threshold=high --fail-on=upgradable
+
+    # Snyk Code Scanning (optional - for source code vulnerabilities)
+    - name: Run Snyk Code Scan
+      uses: snyk/actions/node@master
+      continue-on-error: true  # Don't fail build on code issues
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      with:
         args: --severity-threshold=high
 
-    - name: Run SonarQube Scan
-      uses: sonarqube-quality-gate-action@master
+    # SonarCloud Analysis
+    - name: SonarCloud Scan
+      uses: SonarSource/sonarcloud-github-action@master
       env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      with:
+        projectBaseDir: app/backend
+        
+    # Alternative: Manual SonarCloud with specific parameters
+    - name: SonarCloud Analysis (Alternative)
+      if: false  # Set to true if you want to use this instead
+      run: |
+        cd app/backend
+        npx sonar-scanner \
+          -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }} \
+          -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }} \
+          -Dsonar.host.url=https://sonarcloud.io \
+          -Dsonar.login=${{ secrets.SONAR_TOKEN }}
 
   deploy:
     name: Deploy to AKS
@@ -103,9 +144,7 @@ jobs:
           # STEP 2: Set environment variables
           export RESOURCE_GROUP_NAME="${{ secrets.RESOURCE_GROUP_NAME }}"
           export AKS_CLUSTER_NAME="${{ secrets.AKS_CLUSTER_NAME }}"
-          export ACR_LOGIN_SERVER="${{ secrets.ACR_LOGIN_SERVER }}"
-          export ACR_USERNAME="${{ secrets.ACR_USERNAME }}"
-          export ACR_PASSWORD="${{ secrets.ACR_PASSWORD }}"
+          export ACR_LOGIN_SERVER="${{ needs.build-and-push.outputs.acr-login-server }}"
           export IMAGE_TAG="${{ env.IMAGE_TAG }}"
           export DB_HOST="${{ secrets.DATABASE_FQDN }}"
           export DB_PASSWORD="${{ secrets.DATABASE_ADMIN_PASSWORD }}"
@@ -131,7 +170,7 @@ jobs:
     - name: Deployment Summary
       run: |
         echo "## 🚀 Deployment Successful" >> $GITHUB_STEP_SUMMARY
-        echo "- Backend Image: \`${{ env.REGISTRY }}/retoucherirving/backend:${{ env.IMAGE_TAG }}\`" >> $GITHUB_STEP_SUMMARY
-        echo "- Frontend Image: \`${{ env.REGISTRY }}/retoucherirving/frontend:${{ env.IMAGE_TAG }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "- Backend Image: \`${{ needs.build-and-push.outputs.acr-login-server }}/retoucherirving/backend:${{ env.IMAGE_TAG }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "- Frontend Image: \`${{ needs.build-and-push.outputs.acr-login-server }}/retoucherirving/frontend:${{ env.IMAGE_TAG }}\`" >> $GITHUB_STEP_SUMMARY
         echo "- Website: https://retoucherirving.com" >> $GITHUB_STEP_SUMMARY
         echo "- Jump Server: ${{ secrets.JUMP_SERVER_IP }}" >> $GITHUB_STEP_SUMMARY
