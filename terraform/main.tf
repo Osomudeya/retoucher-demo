@@ -1,10 +1,10 @@
-# Configure Terraform and required providers
 terraform {
   required_version = ">= 1.0"
+
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = "~> 3.85.0"
+      version = ">= 4.34.0"
     }
     random = {
       source  = "hashicorp/random"
@@ -12,23 +12,15 @@ terraform {
     }
   }
 
-  # Store state in Azure Storage (configure backend separately)
-  backend "azurerm" {
-
-  }
+  backend "azurerm" {}
 }
 
-# Configure Azure Provider
 provider "azurerm" {
   features {
-    resource_group {
-      prevent_deletion_if_contains_resources = false
-    }
+
   }
-  
-  # ✅ ADD THIS LINE
-  skip_provider_registration = true
 }
+
 
 
 # Generate random suffix for unique resource names
@@ -103,7 +95,7 @@ module "aks" {
   vm_size                    = var.aks_vm_size
   container_registry_id      = azurerm_container_registry.main.id
   log_analytics_workspace_id = module.monitoring.log_analytics_workspace_id
-  create_role_assignments    = var.create_role_assignments  # NEW
+  create_role_assignments    = var.create_role_assignments # NEW
   tags                       = local.common_tags
 }
 
@@ -132,7 +124,7 @@ module "monitoring" {
   environment             = var.environment
   project_name            = var.project_name
   resource_suffix         = local.resource_suffix
-  create_role_assignments = var.create_role_assignments  # NEW
+  create_role_assignments = var.create_role_assignments # NEW
   tags                    = local.common_tags
 }
 

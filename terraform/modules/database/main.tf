@@ -28,7 +28,7 @@ resource "azurerm_postgresql_flexible_server" "main" {
 
   administrator_login           = var.admin_username
   administrator_password        = var.admin_password
-  # public_network_access_enabled = false
+  public_network_access_enabled = false
 
   storage_mb            = 32768
   sku_name              = "B_Standard_B1ms"
@@ -36,16 +36,11 @@ resource "azurerm_postgresql_flexible_server" "main" {
 
   lifecycle {
     ignore_changes = [
-      zone,                    # Ignore zone changes
-      high_availability,       # Ignore high availability changes
-      storage_mb              # Ignore storage changes (prevents unexpected modifications)
+      zone,
+      high_availability,
+      storage_mb
     ]
   }
-
-  # high_availability {
-  #   mode                      = "ZoneRedundant"
-  #   standby_availability_zone = "2"
-  # }
 
   tags = var.tags
 
