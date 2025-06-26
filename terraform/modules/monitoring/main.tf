@@ -26,7 +26,8 @@ resource "azurerm_dashboard_grafana" "main" {
   resource_group_name               = var.resource_group_name
   location                         = var.location
   
-  grafana_major_version            = "10"
+  grafana_major_version            = "11"
+  sku                              = "Standard"
   
   api_key_enabled                  = true
   deterministic_outbound_ip_enabled = true

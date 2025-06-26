@@ -24,10 +24,10 @@ resource "azurerm_kubernetes_cluster" "main" {
     vnet_subnet_id = var.subnet_id
     min_count      = 1
     max_count      = 5
-    enable_auto_scaling = true
+    # enable_auto_scaling = true
 
     # Enable container insights
-    enable_node_public_ip = false
+    # enable_node_public_ip = false
   }
 
   network_profile {
@@ -58,28 +58,9 @@ resource "azurerm_role_assignment" "aks_acr" {
   # Handle permission failures gracefully
   lifecycle {
     ignore_changes = [
-      # Ignore changes if role assignment already exists
       principal_id,
       role_definition_name,
       scope
     ]
   }
 }
-
-# Approach 2: Conditional role assignment based on variable
-resource "azurerm_role_assignment" "aks_acr_conditional" {
-  count                            = var.create_role_assignments ? 1 : 0
-  principal_id                     = azurerm_kubernetes_cluster.main.kubelet_identity[0].object_id
-  role_definition_name             = "AcrPull"
-  scope                            = var.container_registry_id
-  skip_service_principal_aad_check = true
-}
-
-# # Approach 3: Use null_resource for error handling
-# resource "null_resource" "aks_acr_fallback" {
-#   depends_on = [azurerm_kubernetes_cluster.main]
-  
-#   triggers = {
-#     cluster_id = azurerm_kubernetes_cluster.main.id
-#     acr_id     = var.container_registry_id
-  # }
