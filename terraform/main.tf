@@ -25,7 +25,11 @@ provider "azurerm" {
       prevent_deletion_if_contains_resources = false
     }
   }
+  
+  # ✅ ADD THIS LINE
+  skip_provider_registration = true
 }
+
 
 # Generate random suffix for unique resource names
 resource "random_id" "main" {
