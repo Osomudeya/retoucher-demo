@@ -14,7 +14,7 @@ terraform {
 
   # Store state in Azure Storage (configure backend separately)
   backend "azurerm" {
-    # Configure these values in GitHub Actions secrets
+
   }
 }
 
