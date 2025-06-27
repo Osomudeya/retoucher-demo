@@ -81,7 +81,7 @@ spec:
     solvers:
     - dns01:
         cloudflare:
-          email: admin@retoucherirving.com
+          email: talk2osomudeya4devops@gmail.com
           apiKeySecretRef:
             name: cloudflare-api-key
             key: api-key
