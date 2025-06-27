@@ -227,7 +227,16 @@ jobs:
           # Check if pods are ready
           kubectl wait --for=condition=ready pod -l app=backend -n retoucherirving --timeout=60s
           kubectl wait --for=condition=ready pod -l app=frontend -n retoucherirving --timeout=60s
+
         EOF
+
+        - name: Cleanup Jump Server Files
+          run: |
+           ssh azureuser@${{ secrets.JUMP_SERVER_IP }} << 'EOF'
+              echo "🧹 Cleaning up copied files..."
+              rm -rf ~/k8s ~/scripts ~/config
+        EOF
+
 
     - name: Deployment Summary
       run: |
