@@ -10,10 +10,10 @@ variable "location" {
   type        = string
 }
 
-variable "subnet_id" {
-  description = "ID of the subnet for AKS"
-  type        = string
-}
+# variable "subnet_id" {
+#   description = "ID of the subnet for AKS"
+#   type        = string
+# }
 
 variable "environment" {
   description = "Environment name"
@@ -28,12 +28,6 @@ variable "project_name" {
 variable "resource_suffix" {
   description = "Resource suffix for unique naming"
   type        = string
-}
-
-variable "node_count" {
-  description = "Number of nodes in the default node pool"
-  type        = number
-  default     = 2
 }
 
 variable "vm_size" {
@@ -58,9 +52,30 @@ variable "tags" {
   default     = {}
 }
 
-# NEW: Control role assignment creation
 variable "create_role_assignments" {
   description = "Whether to create role assignments via Terraform (requires elevated permissions)"
   type        = bool
   default     = true
+}
+
+# variable "vnet_id" {
+#   description = "Virtual Network ID - Required for private DNS zone linking"
+#   type        = string
+# }
+
+# Hub-and-Spoke networking variables
+variable "aks_subnet_id" {
+  description = "AKS subnet ID (in spoke VNet)"
+  type        = string
+}
+
+variable "hub_vnet_id" {
+  description = "Hub Virtual Network ID - Required for jump server DNS resolution"
+  type        = string
+}
+
+variable "node_count" {
+  description = "Number of AKS nodes"
+  type        = number
+  default     = 3
 }

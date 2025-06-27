@@ -22,3 +22,18 @@ output "database_subnet_id" {
   description = "ID of the database subnet"
   value       = azurerm_subnet.database.id
 }
+
+output "hub_vnet_name" {
+  description = "Hub Virtual Network name"
+  value       = azurerm_virtual_network.hub.name
+}
+
+output "spoke_vnet_name" {
+  description = "Spoke Virtual Network name"
+  value       = azurerm_virtual_network.spoke.name
+}
+
+output "vnet_id" {
+  description = "Primary Virtual Network ID (Spoke VNet for backward compatibility)"
+  value       = azurerm_virtual_network.spoke.id
+}

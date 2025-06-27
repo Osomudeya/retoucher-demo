@@ -16,11 +16,10 @@ resource "azurerm_kubernetes_cluster" "main" {
   default_node_pool {
     name                = "default"
     vm_size             = var.vm_size
-    vnet_subnet_id      = var.subnet_id
+    vnet_subnet_id      = var.aks_subnet_id
     min_count           = null
     max_count           = null
-    node_count          = 4
-    # enable_auto_scaling = true
+    node_count          = var.node_count
     os_disk_type        = "Managed"
     type                = "VirtualMachineScaleSets"
   }
@@ -37,6 +36,31 @@ resource "azurerm_kubernetes_cluster" "main" {
 
   azure_policy_enabled = true
   tags = var.tags
+}
+
+# Get the private DNS zone created by AKS
+data "azurerm_private_dns_zone" "aks" {
+  name                = "privatelink.${var.location}.azmk8s.io"
+  resource_group_name = azurerm_kubernetes_cluster.main.node_resource_group
+
+  depends_on = [azurerm_kubernetes_cluster.main]
+}
+
+# Link Hub VNet to AKS private DNS zone
+# This allows jump server (in hub) to resolve AKS private endpoint
+resource "azurerm_private_dns_zone_virtual_network_link" "hub_to_aks_dns" {
+  name                  = "hub-to-aks-dns-${var.project_name}-${var.environment}"
+  resource_group_name   = azurerm_kubernetes_cluster.main.node_resource_group
+  private_dns_zone_name = data.azurerm_private_dns_zone.aks.name
+  virtual_network_id    = var.hub_vnet_id
+  registration_enabled  = false
+
+  tags = var.tags
+
+  depends_on = [
+    azurerm_kubernetes_cluster.main,
+    data.azurerm_private_dns_zone.aks
+  ]
 }
 
 # Role assignment for ACR access

@@ -66,13 +66,27 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-and-push
     continue-on-error: true
-    if: false
     
     steps:
     - name: Checkout
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
+
+    - name: Azure Login for Security Scans
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+      if: env.SNYK_TOKEN != ''
+
+    - name: Login to ACR for Snyk
+      run: |
+        ACR_LOGIN_SERVER="${{ needs.build-and-push.outputs.acr-login-server }}"
+        ACR_NAME=$(echo $ACR_LOGIN_SERVER | cut -d'.' -f1)
+        az acr login --name $ACR_NAME
+      if: env.SNYK_TOKEN != ''
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
     - name: Run Snyk Container Scan
       uses: snyk/actions/docker@master
@@ -84,14 +98,24 @@ jobs:
         args: --severity-threshold=high --fail-on=upgradable
       if: env.SNYK_TOKEN != ''
 
-    - name: Run Snyk Code Scan
+    - name: Run Snyk Code Scan (Backend)
       uses: snyk/actions/node@master
       continue-on-error: true
       env:
         SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
       with:
-        args: --severity-threshold=high
+        args: --severity-threshold=high --file=app/backend/package.json
       if: env.SNYK_TOKEN != ''
+
+    # Snyk Code Scan - Frontend (if you have one)
+    - name: Run Snyk Code Scan (Frontend)
+      uses: snyk/actions/node@master
+      continue-on-error: true
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      with:
+        args: --severity-threshold=high --file=app/frontend/package.json
+      if: env.SNYK_TOKEN != '' && hashFiles('app/frontend/package.json') != ''
 
     - name: SonarCloud Scan
       uses: SonarSource/sonarcloud-github-action@master
@@ -101,12 +125,17 @@ jobs:
         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       with:
         projectBaseDir: app/backend
+        args: >
+          -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }}
+          -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }}
+          -Dsonar.host.url=https://sonarcloud.io
+          -Dsonar.login=${{ secrets.SONAR_TOKEN }}
       if: env.SONAR_TOKEN != ''
 
   deploy:
     name: Deploy to AKS
     runs-on: ubuntu-latest
-    needs: [build-and-push]  # Removed security-scan dependency to allow deployment without security tools
+    needs: [build-and-push, security-scan]
     environment: production
     
     steps:
@@ -228,18 +257,18 @@ jobs:
           # Check if pods are ready
           kubectl wait --for=condition=ready pod -l app=backend -n retoucherirving --timeout=60s
           kubectl wait --for=condition=ready pod -l app=frontend -n retoucherirving --timeout=60s
-
         EOF
 
-        - name: Cleanup Jump Server Files
-          run: |
-           ssh azureuser@${{ secrets.JUMP_SERVER_IP }} << 'EOF'
-              echo "🧹 Cleaning up copied files..."
-              rm -rf ~/k8s ~/scripts ~/config
+    - name: Cleanup Jump Server Files
+      if: always()
+      run: |
+        ssh azureuser@${{ secrets.JUMP_SERVER_IP }} << 'EOF'
+          echo "🧹 Cleaning up copied files..."
+          rm -rf ~/k8s ~/scripts ~/config
         EOF
-
 
     - name: Deployment Summary
+      if: success()
       run: |
         echo "## 🚀 Deployment Successful" >> $GITHUB_STEP_SUMMARY
         echo "- **Backend Image:** \`${{ needs.build-and-push.outputs.acr-login-server }}/retoucherirving/backend:${{ env.IMAGE_TAG }}\`" >> $GITHUB_STEP_SUMMARY
@@ -249,6 +278,14 @@ jobs:
         echo "- **Resource Group:** ${{ secrets.AKS_RESOURCE_GROUP }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Jump Server:** ${{ secrets.JUMP_SERVER_IP }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Website:** https://retoucherirving.com" >> $GITHUB_STEP_SUMMARY
+
+    - name: Security Scan Summary
+      if: always()
+      run: |
+        echo "## 🔒 Security Scan Results" >> $GITHUB_STEP_SUMMARY
+        echo "- **Snyk Container Scan:** Check Actions logs for vulnerabilities" >> $GITHUB_STEP_SUMMARY
+        echo "- **Snyk Code Scan:** Check Actions logs for code issues" >> $GITHUB_STEP_SUMMARY
+        echo "- **SonarCloud:** Check [SonarCloud Dashboard](https://sonarcloud.io/organizations/${{ secrets.SONAR_ORGANIZATION }})" >> $GITHUB_STEP_SUMMARY
 
 
 # name: Deploy Application

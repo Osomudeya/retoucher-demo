@@ -69,6 +69,11 @@ module "jump_server" {
   admin_username      = var.jump_server_admin_username
   ssh_public_key      = var.ssh_public_key
   tags                = local.common_tags
+  
+  depends_on = [
+    module.networking,
+    module.aks 
+  ]
 }
 
 # Container Registry
@@ -87,16 +92,27 @@ module "aks" {
 
   resource_group_name        = azurerm_resource_group.main.name
   location                   = azurerm_resource_group.main.location
-  subnet_id                  = module.networking.aks_subnet_id
+  # subnet_id                  = module.networking.aks_subnet_id
+  # vnet_id                    = module.networking.vnet_id
   environment                = var.environment
+
+  # Hub-and-Spoke networking
+  aks_subnet_id        = module.networking.aks_subnet_id      # AKS subnet in spoke VNet
+  hub_vnet_id          = module.networking.hub_vnet_id        # Hub VNet (for jump server DNS)
+  
   project_name               = var.project_name
   resource_suffix            = local.resource_suffix
   node_count                 = var.aks_node_count
   vm_size                    = var.aks_vm_size
   container_registry_id      = azurerm_container_registry.main.id
   log_analytics_workspace_id = module.monitoring.log_analytics_workspace_id
-  create_role_assignments    = var.create_role_assignments # NEW
+  create_role_assignments    = var.create_role_assignments
   tags                       = local.common_tags
+
+  depends_on = [
+    module.networking,
+    azurerm_container_registry.main
+  ]
 }
 
 # PostgreSQL Database Module
