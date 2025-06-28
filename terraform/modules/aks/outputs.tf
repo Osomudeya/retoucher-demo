@@ -27,7 +27,7 @@ output "cluster_private_fqdn" {
 }
 
 output "node_resource_group" {
-  description = "AKS node resource group name"
+  description = "AKS node resource group name where DNS zone is created"
   value       = azurerm_kubernetes_cluster.main.node_resource_group
 }
 
@@ -36,17 +36,7 @@ output "kubelet_identity" {
   value       = azurerm_kubernetes_cluster.main.kubelet_identity
 }
 
-output "private_dns_zone_name" {
-  description = "Private DNS zone name for AKS"
-  value       = data.azurerm_private_dns_zone.aks.name
-}
-
-output "private_dns_zone_id" {
-  description = "Private DNS zone ID for AKS"
-  value       = data.azurerm_private_dns_zone.aks.id
-}
-
-output "hub_dns_link_id" {
-  description = "Hub VNet to AKS DNS zone link ID"
-  value       = azurerm_private_dns_zone_virtual_network_link.hub_to_aks_dns.id
+output "location" {
+  description = "AKS cluster location"
+  value       = azurerm_kubernetes_cluster.main.location
 }

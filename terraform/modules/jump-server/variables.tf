@@ -43,3 +43,21 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "vnet_id" {
+  description = "Hub VNet ID for DNS linking"
+  type        = string
+  default     = null
+}
+
+variable "dns_zone_name" {
+  description = "Private DNS zone name for AKS"
+  type        = string
+  default     = null
+}
+
+variable "dns_zone_resource_group" {
+  description = "Resource group containing the private DNS zone"
+  type        = string
+  default     = null
+}

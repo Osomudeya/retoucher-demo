@@ -45,3 +45,28 @@ output "log_analytics_workspace_id" {
   description = "Log Analytics Workspace ID"
   value       = module.monitoring.log_analytics_workspace_id
 }
+
+# terraform/outputs.tf
+
+# Ingress Public IP for your domain
+output "ingress_public_ip" {
+  description = "Public IP address for ingress (use this in your DNS)"
+  value       = azurerm_public_ip.ingress_ip.ip_address
+}
+
+# DNS Zone Name Servers (configure these in your domain registrar)
+output "dns_zone_name_servers" {
+  description = "Name servers for your DNS zone - configure these in your domain registrar"
+  value       = azurerm_dns_zone.domain.name_servers
+}
+
+output "aks_resource_group" {
+  description = "Resource group containing AKS cluster"
+  value       = azurerm_resource_group.main.name
+}
+
+# Container Registry
+output "acr_login_server" {
+  description = "Login server for Azure Container Registry"
+  value       = azurerm_container_registry.main.login_server
+}

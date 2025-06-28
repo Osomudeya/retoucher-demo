@@ -1,3 +1,5 @@
+# terraform/modules/jump-server/main.tf
+
 # Public IP for Jump Server
 resource "azurerm_public_ip" "jump_server" {
   name                = "pip-jumpserver-${var.project_name}-${var.environment}-${var.resource_suffix}"
@@ -24,15 +26,41 @@ resource "azurerm_network_interface" "jump_server" {
   tags = var.tags
 }
 
+# Network Security Group for Jump Server
+resource "azurerm_network_security_group" "jump_server" {
+  name                = "nsg-jumpserver-${var.project_name}-${var.environment}-${var.resource_suffix}"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+
+  security_rule {
+    name                       = "SSH"
+    priority                   = 1001
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "22"
+    source_address_prefix      = "*"  # You may want to restrict this
+    destination_address_prefix = "*"
+  }
+
+  tags = var.tags
+}
+
+# Associate NSG with Network Interface
+resource "azurerm_network_interface_security_group_association" "jump_server" {
+  network_interface_id      = azurerm_network_interface.jump_server.id
+  network_security_group_id = azurerm_network_security_group.jump_server.id
+}
+
 # Jump Server Virtual Machine
 resource "azurerm_linux_virtual_machine" "jump_server" {
   name                = "vm-jumpserver-${var.project_name}-${var.environment}-${var.resource_suffix}"
   location            = var.location
   resource_group_name = var.resource_group_name
-  size                = "Standard_B1s" # Smallest size for cost optimization
+  size                = "Standard_B1s"
   admin_username      = var.admin_username
 
-  # Disable password authentication, use SSH keys only
   disable_password_authentication = true
 
   network_interface_ids = [
@@ -56,10 +84,19 @@ resource "azurerm_linux_virtual_machine" "jump_server" {
     version   = "latest"
   }
 
-  # Custom script to install required tools
-  custom_data = base64encode(templatefile("${path.root}/../scripts/setup-jump-server.sh", {
-    admin_username = var.admin_username
-  }))
-
   tags = var.tags
+}
+
+resource "azurerm_private_dns_zone_virtual_network_link" "hub_to_aks_dns" {
+  count = var.vnet_id != null && var.dns_zone_name != null && var.dns_zone_resource_group != null ? 1 : 0
+  
+  name                  = "hub-to-aks-dns-${var.project_name}-${var.environment}"
+  resource_group_name   = var.dns_zone_resource_group
+  private_dns_zone_name = var.dns_zone_name
+  virtual_network_id    = var.vnet_id
+  registration_enabled  = false
+  
+  tags = merge(var.tags, {
+    purpose = "dns-link"
+  })
 }
