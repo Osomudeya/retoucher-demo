@@ -9,24 +9,45 @@ on:
         default: 'apply'
         type: choice
         options:
-        - apply
         - plan
+        - apply
+        - destroy
   push:
     branches:
-      - none
+      - none 
     paths:
       - 'terraform/**'
 
 env:
   TF_VERSION: '1.5.0'
+  
+  # Azure Authentication
   ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
   ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
   ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
   ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+  
+  # Terraform Variables (using your existing secrets)
+  TF_VAR_environment: "production"
+  TF_VAR_project_name: "retoucherirving"
+  TF_VAR_location: "East US"
+  TF_VAR_custom_domain: "retoucherirving.com"
+  
+  # Jump Server Automation (uses same ARM credentials)
+  TF_VAR_arm_client_id: ${{ secrets.ARM_CLIENT_ID }}
+  TF_VAR_arm_client_secret: ${{ secrets.ARM_CLIENT_SECRET }}
+  TF_VAR_arm_tenant_id: ${{ secrets.ARM_TENANT_ID }}
+  
+  # Database and other configs
+  TF_VAR_database_admin_username: "adminuser"
+  TF_VAR_jump_server_admin_username: "azureuser"
+  TF_VAR_aks_node_count: 2
+  TF_VAR_aks_vm_size: "Standard_D2s_v3"
+  TF_VAR_create_role_assignments: true
 
 jobs:
   terraform:
-    name: 'Terraform'
+    name: 'Deploy Infrastructure'
     runs-on: ubuntu-latest
     environment: production
     
@@ -36,7 +57,7 @@ jobs:
         working-directory: ./terraform
 
     steps:
-    - name: Checkout
+    - name: Checkout Code
       uses: actions/checkout@v4
 
     - name: Setup Terraform
@@ -45,10 +66,10 @@ jobs:
         terraform_version: ${{ env.TF_VERSION }}
         terraform_wrapper: false
 
-    - name: Terraform Auto-Format
+    - name: Terraform Format Check
       run: |
-        terraform fmt -recursive
-        echo "✅ Terraform files auto-formatted"
+        terraform fmt -recursive -check
+        echo " Terraform formatting verified"
 
     - name: Terraform Init
       run: |
@@ -67,49 +88,355 @@ jobs:
           -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
           -var="database_admin_password=${{ secrets.DATABASE_ADMIN_PASSWORD }}" \
           -out=tfplan
-      env:
-        TF_VAR_environment: "production"
-        TF_VAR_project_name: "retoucherirving"
 
     - name: Upload Plan Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: terraform-plan
+        name: terraform-plan-${{ github.run_number }}
         path: terraform/tfplan
+        retention-days: 30
 
+    # AUTO-APPLY: No manual intervention needed
     - name: Terraform Apply
       if: github.event.inputs.action == 'apply' || (github.ref == 'refs/heads/main' && github.event_name == 'push')
-      run: terraform apply -auto-approve tfplan
+      run: |
+        echo " Deploying infrastructure with full automation..."
+        terraform apply -auto-approve tfplan
 
+    #  DESTROY: Only on manual trigger
+    - name: Terraform Destroy
+      if: github.event.inputs.action == 'destroy'
+      run: |
+        echo " Destroying infrastructure..."
+        terraform destroy -auto-approve \
+          -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+          -var="database_admin_password=${{ secrets.DATABASE_ADMIN_PASSWORD }}"
+
+    # COMPREHENSIVE OUTPUT CAPTURE - All Infrastructure Components
+    - name: Capture All Terraform Outputs
+      if: github.event.inputs.action == 'apply' || (github.ref == 'refs/heads/main' && github.event_name == 'push')
+      id: tf_outputs
+      run: |
+        echo " Capturing all Terraform outputs..."
+        
+        # Core Infrastructure Outputs
+        echo "resource_group_name=$(terraform output -raw resource_group_name 2>/dev/null || terraform output -raw aks_resource_group 2>/dev/null || echo 'not-found')" >> $GITHUB_OUTPUT
+        echo "aks_cluster_name=$(terraform output -raw aks_cluster_name 2>/dev/null || echo 'not-found')" >> $GITHUB_OUTPUT
+        echo "aks_resource_group=$(terraform output -raw aks_resource_group 2>/dev/null || terraform output -raw resource_group_name 2>/dev/null || echo 'not-found')" >> $GITHUB_OUTPUT
+        
+        # Container Registry Outputs
+        echo "acr_login_server=$(terraform output -raw acr_login_server 2>/dev/null || terraform output -raw container_registry_login_server 2>/dev/null || echo 'not-found')" >> $GITHUB_OUTPUT
+        echo "container_registry_login_server=$(terraform output -raw container_registry_login_server 2>/dev/null || terraform output -raw acr_login_server 2>/dev/null || echo 'not-found')" >> $GITHUB_OUTPUT
+        
+        # Network & Access Outputs
+        echo "jump_server_public_ip=$(terraform output -raw jump_server_public_ip 2>/dev/null || echo 'not-found')" >> $GITHUB_OUTPUT
+        echo "ingress_public_ip=$(terraform output -raw ingress_public_ip 2>/dev/null || echo 'not-found')" >> $GITHUB_OUTPUT
+        
+        # Database Outputs
+        echo "database_fqdn=$(terraform output -raw database_fqdn 2>/dev/null || echo 'not-found')" >> $GITHUB_OUTPUT
+        echo "database_server_name=$(terraform output -raw database_server_name 2>/dev/null || echo 'not-found')" >> $GITHUB_OUTPUT
+        
+        # DNS & Domain Outputs
+        echo "dns_zone_name_servers=$(terraform output -json dns_zone_name_servers 2>/dev/null || echo '[]')" >> $GITHUB_OUTPUT
+        echo "dns_zone_name=$(terraform output -raw dns_zone_name 2>/dev/null || echo 'not-found')" >> $GITHUB_OUTPUT
+        
+        # Storage Outputs
+        echo "storage_account_name=$(terraform output -raw storage_account_name 2>/dev/null || echo 'not-found')" >> $GITHUB_OUTPUT
+        echo "storage_account_key=$(terraform output -raw storage_account_key 2>/dev/null || echo 'not-found')" >> $GITHUB_OUTPUT
+        
+        # Key Vault Outputs
+        echo "key_vault_name=$(terraform output -raw key_vault_name 2>/dev/null || echo 'not-found')" >> $GITHUB_OUTPUT
+        echo "key_vault_uri=$(terraform output -raw key_vault_uri 2>/dev/null || echo 'not-found')" >> $GITHUB_OUTPUT
+        
+        # Application Gateway / Load Balancer Outputs
+        echo "application_gateway_public_ip=$(terraform output -raw application_gateway_public_ip 2>/dev/null || echo 'not-found')" >> $GITHUB_OUTPUT
+        echo "load_balancer_ip=$(terraform output -raw load_balancer_ip 2>/dev/null || echo 'not-found')" >> $GITHUB_OUTPUT
+        
+        # Virtual Network Outputs
+        echo "vnet_name=$(terraform output -raw vnet_name 2>/dev/null || echo 'not-found')" >> $GITHUB_OUTPUT
+        echo "vnet_id=$(terraform output -raw vnet_id 2>/dev/null || echo 'not-found')" >> $GITHUB_OUTPUT
+        echo "subnet_id=$(terraform output -raw subnet_id 2>/dev/null || echo 'not-found')" >> $GITHUB_OUTPUT
+        
+        # Log Analytics Outputs
+        echo "log_analytics_workspace_id=$(terraform output -raw log_analytics_workspace_id 2>/dev/null || echo 'not-found')" >> $GITHUB_OUTPUT
+        echo "log_analytics_workspace_name=$(terraform output -raw log_analytics_workspace_name 2>/dev/null || echo 'not-found')" >> $GITHUB_OUTPUT
+        
+        # Azure AD / Identity Outputs
+        echo "managed_identity_id=$(terraform output -raw managed_identity_id 2>/dev/null || echo 'not-found')" >> $GITHUB_OUTPUT
+        echo "managed_identity_client_id=$(terraform output -raw managed_identity_client_id 2>/dev/null || echo 'not-found')" >> $GITHUB_OUTPUT
+        
+        # Subscription & Location Info
+        echo "subscription_id=$(terraform output -raw subscription_id 2>/dev/null || echo '${{ secrets.ARM_SUBSCRIPTION_ID }}')" >> $GITHUB_OUTPUT
+        echo "location=$(terraform output -raw location 2>/dev/null || echo '${{ env.TF_VAR_location }}')" >> $GITHUB_OUTPUT
+        
+        echo "All outputs captured successfully"
+
+    # AZURE LOGIN for additional operations
     - name: Azure Login
       if: github.event.inputs.action == 'apply' || (github.ref == 'refs/heads/main' && github.event_name == 'push')
       uses: azure/login@v1
       with:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-    - name: Terraform Output
+    #  COMPREHENSIVE INFRASTRUCTURE SUMMARY
+    - name: Display Infrastructure Summary
       if: github.event.inputs.action == 'apply' || (github.ref == 'refs/heads/main' && github.event_name == 'push')
       run: |
-        echo "## Terraform Outputs" >> $GITHUB_STEP_SUMMARY
-        echo "- **Resource Group**: $(terraform output -raw resource_group_name)" >> $GITHUB_STEP_SUMMARY
-        echo "- **AKS Cluster**: $(terraform output -raw aks_cluster_name)" >> $GITHUB_STEP_SUMMARY
-        echo "- **ACR Login Server**: $(terraform output -raw container_registry_login_server)" >> $GITHUB_STEP_SUMMARY
-        echo "- **Jump Server IP**: $(terraform output -raw jump_server_public_ip)" >> $GITHUB_STEP_SUMMARY
-        echo "- **Database FQDN**: $(terraform output -raw database_fqdn)" >> $GITHUB_STEP_SUMMARY
+        echo "## Infrastructure Deployed Successfully!" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "###  Core Infrastructure:" >> $GITHUB_STEP_SUMMARY
+        echo "- **Resource Group:** ${{ steps.tf_outputs.outputs.resource_group_name }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **AKS Cluster:** ${{ steps.tf_outputs.outputs.aks_cluster_name }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Location:** ${{ steps.tf_outputs.outputs.location }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Subscription:** ${{ steps.tf_outputs.outputs.subscription_id }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "###  Container Registry:" >> $GITHUB_STEP_SUMMARY
+        echo "- **ACR Login Server:** ${{ steps.tf_outputs.outputs.acr_login_server }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Network & Access:" >> $GITHUB_STEP_SUMMARY
+        echo "- **Jump Server IP:** ${{ steps.tf_outputs.outputs.jump_server_public_ip }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Ingress IP:** ${{ steps.tf_outputs.outputs.ingress_public_ip }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **VNet Name:** ${{ steps.tf_outputs.outputs.vnet_name }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "###  Database:" >> $GITHUB_STEP_SUMMARY
+        echo "- **Database FQDN:** ${{ steps.tf_outputs.outputs.database_fqdn }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Database Server:** ${{ steps.tf_outputs.outputs.database_server_name }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "###  DNS Configuration:" >> $GITHUB_STEP_SUMMARY
+        echo "Configure these name servers in your domain registrar:" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        echo '${{ steps.tf_outputs.outputs.dns_zone_name_servers }}' >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "###  Security & Storage:" >> $GITHUB_STEP_SUMMARY
+        echo "- **Key Vault:** ${{ steps.tf_outputs.outputs.key_vault_name }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Storage Account:** ${{ steps.tf_outputs.outputs.storage_account_name }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Managed Identity:** ${{ steps.tf_outputs.outputs.managed_identity_id }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "###  Monitoring:" >> $GITHUB_STEP_SUMMARY
+        echo "- **Log Analytics:** ${{ steps.tf_outputs.outputs.log_analytics_workspace_name }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "###  Access Commands:" >> $GITHUB_STEP_SUMMARY
+        echo "- **Jump Server SSH:** \`ssh -i ~/.ssh/retoucherirving_azure azureuser@${{ steps.tf_outputs.outputs.jump_server_public_ip }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **AKS Connection:** \`az aks get-credentials --resource-group ${{ steps.tf_outputs.outputs.resource_group_name }} --name ${{ steps.tf_outputs.outputs.aks_cluster_name }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **ACR Login:** \`az acr login --name ${{ steps.tf_outputs.outputs.acr_login_server }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "###  Status:" >> $GITHUB_STEP_SUMMARY
+        echo " **Infrastructure is fully deployed and ready for application deployment!**" >> $GITHUB_STEP_SUMMARY
 
-    - name: Save Outputs to GitHub Secrets
+    #  SAVE ALL OUTPUTS FOR OTHER WORKFLOWS
+    - name: Save All Outputs for Downstream Workflows
       if: github.event.inputs.action == 'apply' || (github.ref == 'refs/heads/main' && github.event_name == 'push')
+      id: save_outputs
       run: |
-        echo "RESOURCE_GROUP_NAME=$(terraform output -raw resource_group_name)" >> $GITHUB_OUTPUT
-        echo "AKS_CLUSTER_NAME=$(terraform output -raw aks_cluster_name)" >> $GITHUB_OUTPUT
-        echo "ACR_LOGIN_SERVER=$(terraform output -raw container_registry_login_server)" >> $GITHUB_OUTPUT
-        echo "JUMP_SERVER_IP=$(terraform output -raw jump_server_public_ip)" >> $GITHUB_OUTPUT
-        echo "DATABASE_FQDN=$(terraform output -raw database_fqdn)" >> $GITHUB_OUTPUT
-      id: tf_outputs
+        echo " Saving all outputs for downstream workflows..."
+        
+        # Core Infrastructure
+        echo "RESOURCE_GROUP_NAME=${{ steps.tf_outputs.outputs.resource_group_name }}" >> $GITHUB_OUTPUT
+        echo "AKS_CLUSTER_NAME=${{ steps.tf_outputs.outputs.aks_cluster_name }}" >> $GITHUB_OUTPUT
+        echo "AKS_RESOURCE_GROUP=${{ steps.tf_outputs.outputs.aks_resource_group }}" >> $GITHUB_OUTPUT
+        echo "LOCATION=${{ steps.tf_outputs.outputs.location }}" >> $GITHUB_OUTPUT
+        echo "SUBSCRIPTION_ID=${{ steps.tf_outputs.outputs.subscription_id }}" >> $GITHUB_OUTPUT
+        
+        # Container Registry
+        echo "ACR_LOGIN_SERVER=${{ steps.tf_outputs.outputs.acr_login_server }}" >> $GITHUB_OUTPUT
+        echo "CONTAINER_REGISTRY_LOGIN_SERVER=${{ steps.tf_outputs.outputs.container_registry_login_server }}" >> $GITHUB_OUTPUT
+        
+        # Network & Access
+        echo "JUMP_SERVER_IP=${{ steps.tf_outputs.outputs.jump_server_public_ip }}" >> $GITHUB_OUTPUT
+        echo "INGRESS_IP=${{ steps.tf_outputs.outputs.ingress_public_ip }}" >> $GITHUB_OUTPUT
+        echo "VNET_NAME=${{ steps.tf_outputs.outputs.vnet_name }}" >> $GITHUB_OUTPUT
+        echo "VNET_ID=${{ steps.tf_outputs.outputs.vnet_id }}" >> $GITHUB_OUTPUT
+        echo "SUBNET_ID=${{ steps.tf_outputs.outputs.subnet_id }}" >> $GITHUB_OUTPUT
+        
+        # Database
+        echo "DATABASE_FQDN=${{ steps.tf_outputs.outputs.database_fqdn }}" >> $GITHUB_OUTPUT
+        echo "DATABASE_SERVER_NAME=${{ steps.tf_outputs.outputs.database_server_name }}" >> $GITHUB_OUTPUT
+        
+        # DNS & Domain
+        echo "DNS_ZONE_NAME_SERVERS=${{ steps.tf_outputs.outputs.dns_zone_name_servers }}" >> $GITHUB_OUTPUT
+        echo "DNS_ZONE_NAME=${{ steps.tf_outputs.outputs.dns_zone_name }}" >> $GITHUB_OUTPUT
+        
+        # Storage
+        echo "STORAGE_ACCOUNT_NAME=${{ steps.tf_outputs.outputs.storage_account_name }}" >> $GITHUB_OUTPUT
+        echo "STORAGE_ACCOUNT_KEY=${{ steps.tf_outputs.outputs.storage_account_key }}" >> $GITHUB_OUTPUT
+        
+        # Security
+        echo "KEY_VAULT_NAME=${{ steps.tf_outputs.outputs.key_vault_name }}" >> $GITHUB_OUTPUT
+        echo "KEY_VAULT_URI=${{ steps.tf_outputs.outputs.key_vault_uri }}" >> $GITHUB_OUTPUT
+        echo "MANAGED_IDENTITY_ID=${{ steps.tf_outputs.outputs.managed_identity_id }}" >> $GITHUB_OUTPUT
+        echo "MANAGED_IDENTITY_CLIENT_ID=${{ steps.tf_outputs.outputs.managed_identity_client_id }}" >> $GITHUB_OUTPUT
+        
+        # Load Balancing
+        echo "APPLICATION_GATEWAY_IP=${{ steps.tf_outputs.outputs.application_gateway_public_ip }}" >> $GITHUB_OUTPUT
+        echo "LOAD_BALANCER_IP=${{ steps.tf_outputs.outputs.load_balancer_ip }}" >> $GITHUB_OUTPUT
+        
+        # Monitoring
+        echo "LOG_ANALYTICS_WORKSPACE_ID=${{ steps.tf_outputs.outputs.log_analytics_workspace_id }}" >> $GITHUB_OUTPUT
+        echo "LOG_ANALYTICS_WORKSPACE_NAME=${{ steps.tf_outputs.outputs.log_analytics_workspace_name }}" >> $GITHUB_OUTPUT
+        
+        echo "All outputs saved for downstream workflows"
 
+    # JOB-LEVEL OUTPUTS - Available to other workflows via needs.terraform.outputs.*
     outputs:
-      resource_group_name: ${{ steps.tf_outputs.outputs.RESOURCE_GROUP_NAME }}
-      aks_cluster_name: ${{ steps.tf_outputs.outputs.AKS_CLUSTER_NAME }}
-      acr_login_server: ${{ steps.tf_outputs.outputs.ACR_LOGIN_SERVER }}
-      jump_server_ip: ${{ steps.tf_outputs.outputs.JUMP_SERVER_IP }}
-      database_fqdn: ${{ steps.tf_outputs.outputs.DATABASE_FQDN }}
+      # Core Infrastructure
+      resource_group_name: ${{ steps.save_outputs.outputs.RESOURCE_GROUP_NAME }}
+      aks_cluster_name: ${{ steps.save_outputs.outputs.AKS_CLUSTER_NAME }}
+      aks_resource_group: ${{ steps.save_outputs.outputs.AKS_RESOURCE_GROUP }}
+      location: ${{ steps.save_outputs.outputs.LOCATION }}
+      subscription_id: ${{ steps.save_outputs.outputs.SUBSCRIPTION_ID }}
+      
+      # Container Registry
+      acr_login_server: ${{ steps.save_outputs.outputs.ACR_LOGIN_SERVER }}
+      container_registry_login_server: ${{ steps.save_outputs.outputs.CONTAINER_REGISTRY_LOGIN_SERVER }}
+      
+      # Network & Access
+      jump_server_ip: ${{ steps.save_outputs.outputs.JUMP_SERVER_IP }}
+      ingress_ip: ${{ steps.save_outputs.outputs.INGRESS_IP }}
+      vnet_name: ${{ steps.save_outputs.outputs.VNET_NAME }}
+      vnet_id: ${{ steps.save_outputs.outputs.VNET_ID }}
+      subnet_id: ${{ steps.save_outputs.outputs.SUBNET_ID }}
+      
+      # Database
+      database_fqdn: ${{ steps.save_outputs.outputs.DATABASE_FQDN }}
+      database_server_name: ${{ steps.save_outputs.outputs.DATABASE_SERVER_NAME }}
+      
+      # DNS & Domain
+      dns_zone_name_servers: ${{ steps.save_outputs.outputs.DNS_ZONE_NAME_SERVERS }}
+      dns_zone_name: ${{ steps.save_outputs.outputs.DNS_ZONE_NAME }}
+      
+      # Storage
+      storage_account_name: ${{ steps.save_outputs.outputs.STORAGE_ACCOUNT_NAME }}
+      storage_account_key: ${{ steps.save_outputs.outputs.STORAGE_ACCOUNT_KEY }}
+      
+      # Security
+      key_vault_name: ${{ steps.save_outputs.outputs.KEY_VAULT_NAME }}
+      key_vault_uri: ${{ steps.save_outputs.outputs.KEY_VAULT_URI }}
+      managed_identity_id: ${{ steps.save_outputs.outputs.MANAGED_IDENTITY_ID }}
+      managed_identity_client_id: ${{ steps.save_outputs.outputs.MANAGED_IDENTITY_CLIENT_ID }}
+      
+      # Load Balancing
+      application_gateway_ip: ${{ steps.save_outputs.outputs.APPLICATION_GATEWAY_IP }}
+      load_balancer_ip: ${{ steps.save_outputs.outputs.LOAD_BALANCER_IP }}
+      
+      # Monitoring
+      log_analytics_workspace_id: ${{ steps.save_outputs.outputs.LOG_ANALYTICS_WORKSPACE_ID }}
+      log_analytics_workspace_name: ${{ steps.save_outputs.outputs.LOG_ANALYTICS_WORKSPACE_NAME }}
+
+
+
+# name: Deploy Infrastructure
+
+# on:
+#   workflow_dispatch:
+#     inputs:
+#       action:
+#         description: 'Terraform action to perform'
+#         required: true
+#         default: 'apply'
+#         type: choice
+#         options:
+#         - apply
+#         - plan
+#   push:
+#     branches:
+#       - none
+#     paths:
+#       - 'terraform/**'
+
+# env:
+#   TF_VERSION: '1.5.0'
+#   ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+#   ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+#   ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+#   ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+
+# jobs:
+#   terraform:
+#     name: 'Terraform'
+#     runs-on: ubuntu-latest
+#     environment: production
+    
+#     defaults:
+#       run:
+#         shell: bash
+#         working-directory: ./terraform
+
+#     steps:
+#     - name: Checkout
+#       uses: actions/checkout@v4
+
+#     - name: Setup Terraform
+#       uses: hashicorp/setup-terraform@v2
+#       with:
+#         terraform_version: ${{ env.TF_VERSION }}
+#         terraform_wrapper: false
+
+#     - name: Terraform Auto-Format
+#       run: |
+#         terraform fmt -recursive
+#         echo "✅ Terraform files auto-formatted"
+
+#     - name: Terraform Init
+#       run: |
+#         terraform init \
+#           -backend-config="resource_group_name=${{ secrets.TF_STATE_RESOURCE_GROUP }}" \
+#           -backend-config="storage_account_name=${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" \
+#           -backend-config="container_name=${{ secrets.TF_STATE_CONTAINER }}" \
+#           -backend-config="key=${{ secrets.TF_STATE_KEY }}"
+
+#     - name: Terraform Validate
+#       run: terraform validate
+
+#     - name: Terraform Plan
+#       run: |
+#         terraform plan \
+#           -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+#           -var="database_admin_password=${{ secrets.DATABASE_ADMIN_PASSWORD }}" \
+#           -out=tfplan
+#       env:
+#         TF_VAR_environment: "production"
+#         TF_VAR_project_name: "retoucherirving"
+
+#     - name: Upload Plan Artifact
+#       uses: actions/upload-artifact@v4
+#       with:
+#         name: terraform-plan
+#         path: terraform/tfplan
+
+#     - name: Terraform Apply
+#       if: github.event.inputs.action == 'apply' || (github.ref == 'refs/heads/main' && github.event_name == 'push')
+#       run: terraform apply -auto-approve tfplan
+
+#     - name: Azure Login
+#       if: github.event.inputs.action == 'apply' || (github.ref == 'refs/heads/main' && github.event_name == 'push')
+#       uses: azure/login@v1
+#       with:
+#         creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+#     - name: Terraform Output
+#       if: github.event.inputs.action == 'apply' || (github.ref == 'refs/heads/main' && github.event_name == 'push')
+#       run: |
+#         echo "## Terraform Outputs" >> $GITHUB_STEP_SUMMARY
+#         echo "- **Resource Group**: $(terraform output -raw resource_group_name)" >> $GITHUB_STEP_SUMMARY
+#         echo "- **AKS Cluster**: $(terraform output -raw aks_cluster_name)" >> $GITHUB_STEP_SUMMARY
+#         echo "- **ACR Login Server**: $(terraform output -raw container_registry_login_server)" >> $GITHUB_STEP_SUMMARY
+#         echo "- **Jump Server IP**: $(terraform output -raw jump_server_public_ip)" >> $GITHUB_STEP_SUMMARY
+#         echo "- **Database FQDN**: $(terraform output -raw database_fqdn)" >> $GITHUB_STEP_SUMMARY
+
+#     - name: Save Outputs to GitHub Secrets
+#       if: github.event.inputs.action == 'apply' || (github.ref == 'refs/heads/main' && github.event_name == 'push')
+#       run: |
+#         echo "RESOURCE_GROUP_NAME=$(terraform output -raw resource_group_name)" >> $GITHUB_OUTPUT
+#         echo "AKS_CLUSTER_NAME=$(terraform output -raw aks_cluster_name)" >> $GITHUB_OUTPUT
+#         echo "ACR_LOGIN_SERVER=$(terraform output -raw container_registry_login_server)" >> $GITHUB_OUTPUT
+#         echo "JUMP_SERVER_IP=$(terraform output -raw jump_server_public_ip)" >> $GITHUB_OUTPUT
+#         echo "DATABASE_FQDN=$(terraform output -raw database_fqdn)" >> $GITHUB_OUTPUT
+#       id: tf_outputs
+
+#     outputs:
+#       resource_group_name: ${{ steps.tf_outputs.outputs.RESOURCE_GROUP_NAME }}
+#       aks_cluster_name: ${{ steps.tf_outputs.outputs.AKS_CLUSTER_NAME }}
+#       acr_login_server: ${{ steps.tf_outputs.outputs.ACR_LOGIN_SERVER }}
+#       jump_server_ip: ${{ steps.tf_outputs.outputs.JUMP_SERVER_IP }}
+#       database_fqdn: ${{ steps.tf_outputs.outputs.DATABASE_FQDN }}

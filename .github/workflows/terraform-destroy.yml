@@ -7,37 +7,117 @@ on:
         description: 'Type "DESTROY" to confirm infrastructure destruction'
         required: true
         type: string
+      backup_confirmation:
+        description: 'Have you backed up all critical data? (yes/no)'
+        required: true
+        type: choice
+        options:
+        - 'no'
+        - 'yes'
+      environment_confirmation:
+        description: 'Confirm environment to destroy'
+        required: true
+        type: choice
+        options:
+        - 'production'
+        - 'staging'
+        - 'development'
 
 env:
   TF_VERSION: '1.5.0'
+  
+  # Azure Authentication
   ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
   ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
   ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
   ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+  
+  # Terraform Variables (must match deploy workflow for consistency)
+  TF_VAR_environment: "production"
+  TF_VAR_project_name: "retoucherirving"
+  TF_VAR_location: "East US"
+  TF_VAR_custom_domain: "retoucherirving.com"
+  
+  # Jump Server Automation
+  TF_VAR_arm_client_id: ${{ secrets.ARM_CLIENT_ID }}
+  TF_VAR_arm_client_secret: ${{ secrets.ARM_CLIENT_SECRET }}
+  TF_VAR_arm_tenant_id: ${{ secrets.ARM_TENANT_ID }}
+  
+  # Database and other configs
+  TF_VAR_database_admin_username: "pgadmin"
+  TF_VAR_jump_server_admin_username: "azureuser"
+  TF_VAR_aks_node_count: 2
+  TF_VAR_aks_vm_size: "Standard_D2s_v3"
+  TF_VAR_create_role_assignments: true
 
 jobs:
-  terraform-destroy:
-    name: 'Terraform Destroy'
+  # PRE-DESTRUCTION SAFETY CHECKS
+  safety-checks:
+    name: 'Pre-Destruction Safety Checks'
     runs-on: ubuntu-latest
+    environment: production  # Requires manual approval
+    
+    steps:
+    - name: Validate All Confirmations
+      run: |
+        echo " Performing comprehensive safety validation..."
+        
+        # Validate destruction confirmation
+        if [ "${{ github.event.inputs.confirm_destroy }}" != "DESTROY" ]; then
+          echo "SAFETY FAILED: Destruction not confirmed. You must type 'DESTROY' exactly."
+          exit 1
+        fi
+        
+        # Validate backup confirmation
+        if [ "${{ github.event.inputs.backup_confirmation }}" != "yes" ]; then
+          echo " SAFETY FAILED: Backup confirmation required. Please confirm you've backed up all critical data."
+          exit 1
+        fi
+        
+        # Validate environment
+        if [ "${{ github.event.inputs.environment_confirmation }}" != "production" ]; then
+          echo " SAFETY FAILED: Environment mismatch. This workflow destroys PRODUCTION environment."
+          exit 1
+        fi
+        
+        echo " All safety checks passed"
+        echo "WARNING: This will PERMANENTLY DELETE all infrastructure!"
+        
+    - name: Display Destruction Warning
+      run: |
+        echo "## CRITICAL DESTRUCTION WARNING" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Resources to be PERMANENTLY DELETED:" >> $GITHUB_STEP_SUMMARY
+        echo "- **AKS Cluster** and all workloads" >> $GITHUB_STEP_SUMMARY
+        echo "- **Database** and ALL data" >> $GITHUB_STEP_SUMMARY
+        echo "- **Storage accounts** and ALL files" >> $GITHUB_STEP_SUMMARY
+        echo "- **Container Registry** and ALL images" >> $GITHUB_STEP_SUMMARY
+        echo "- **DNS Zone** and domain configuration" >> $GITHUB_STEP_SUMMARY
+        echo "- **Key Vault** and ALL secrets" >> $GITHUB_STEP_SUMMARY
+        echo "- **Virtual Networks** and security rules" >> $GITHUB_STEP_SUMMARY
+        echo "- **Jump Server** and access configuration" >> $GITHUB_STEP_SUMMARY
+        echo "- **Log Analytics** and ALL monitoring data" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Recovery Information:" >> $GITHUB_STEP_SUMMARY
+        echo "- **Recovery Time:** 45-60 minutes using deploy workflow" >> $GITHUB_STEP_SUMMARY
+        echo "- **Data Recovery:** Only if backups were properly created" >> $GITHUB_STEP_SUMMARY
+        echo "- **Domain Config:** Will need to be reconfigured manually" >> $GITHUB_STEP_SUMMARY
+
+  # INVENTORY CURRENT INFRASTRUCTURE
+  inventory:
+    name: 'Infrastructure Inventory'
+    runs-on: ubuntu-latest
+    needs: safety-checks
     environment: production
     
     defaults:
       run:
         shell: bash
         working-directory: ./terraform
-
+        
     steps:
-    - name: Checkout
+    - name: Checkout Code
       uses: actions/checkout@v4
-
-    - name: Validate Destruction Confirmation
-      working-directory: .
-      run: |
-        if [ "${{ github.event.inputs.confirm_destroy }}" != "DESTROY" ]; then
-          echo "❌ Destruction not confirmed. You must type 'DESTROY' exactly."
-          exit 1
-        fi
-        echo "✅ Destruction confirmed"
 
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v2
@@ -53,24 +133,281 @@ jobs:
           -backend-config="container_name=${{ secrets.TF_STATE_CONTAINER }}" \
           -backend-config="key=${{ secrets.TF_STATE_KEY }}"
 
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Capture Current Infrastructure State
+      id: inventory
+      run: |
+        echo "Capturing current infrastructure state for final inventory..."
+        
+        # Capture Terraform outputs before destruction
+        terraform refresh \
+          -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+          -var="database_admin_password=${{ secrets.DATABASE_ADMIN_PASSWORD }}"
+        
+        # Capture all current outputs
+        echo "CURRENT_RESOURCE_GROUP=$(terraform output -raw resource_group_name 2>/dev/null || terraform output -raw aks_resource_group 2>/dev/null || echo 'not-found')" >> $GITHUB_OUTPUT
+        echo "CURRENT_AKS_CLUSTER=$(terraform output -raw aks_cluster_name 2>/dev/null || echo 'not-found')" >> $GITHUB_OUTPUT
+        echo "CURRENT_ACR=$(terraform output -raw acr_login_server 2>/dev/null || terraform output -raw container_registry_login_server 2>/dev/null || echo 'not-found')" >> $GITHUB_OUTPUT
+        echo "CURRENT_DATABASE=$(terraform output -raw database_fqdn 2>/dev/null || echo 'not-found')" >> $GITHUB_OUTPUT
+        echo "CURRENT_JUMP_SERVER=$(terraform output -raw jump_server_public_ip 2>/dev/null || echo 'not-found')" >> $GITHUB_OUTPUT
+        echo "CURRENT_KEY_VAULT=$(terraform output -raw key_vault_name 2>/dev/null || echo 'not-found')" >> $GITHUB_OUTPUT
+        echo "CURRENT_STORAGE=$(terraform output -raw storage_account_name 2>/dev/null || echo 'not-found')" >> $GITHUB_OUTPUT
+        
+        echo "Infrastructure inventory captured"
+
+    - name: Display Current Infrastructure Inventory
+      run: |
+        echo "## CURRENT INFRASTRUCTURE INVENTORY" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Resources Currently Active:" >> $GITHUB_STEP_SUMMARY
+        echo "- **Resource Group:** ${{ steps.inventory.outputs.CURRENT_RESOURCE_GROUP }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **AKS Cluster:** ${{ steps.inventory.outputs.CURRENT_AKS_CLUSTER }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Container Registry:** ${{ steps.inventory.outputs.CURRENT_ACR }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Database:** ${{ steps.inventory.outputs.CURRENT_DATABASE }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Jump Server:** ${{ steps.inventory.outputs.CURRENT_JUMP_SERVER }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Key Vault:** ${{ steps.inventory.outputs.CURRENT_KEY_VAULT }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Storage Account:** ${{ steps.inventory.outputs.CURRENT_STORAGE }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Destruction Timeline:" >> $GITHUB_STEP_SUMMARY
+        echo "- **Started:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+        echo "- **Estimated Duration:** 15-20 minutes" >> $GITHUB_STEP_SUMMARY
+
+    outputs:
+      resource_group: ${{ steps.inventory.outputs.CURRENT_RESOURCE_GROUP }}
+      aks_cluster: ${{ steps.inventory.outputs.CURRENT_AKS_CLUSTER }}
+      acr_login_server: ${{ steps.inventory.outputs.CURRENT_ACR }}
+      database_fqdn: ${{ steps.inventory.outputs.CURRENT_DATABASE }}
+
+  # TERRAFORM DESTRUCTION
+  terraform-destroy:
+    name: 'Execute Terraform Destroy'
+    runs-on: ubuntu-latest
+    needs: [safety-checks, inventory]
+    environment: production
+    
+    defaults:
+      run:
+        shell: bash
+        working-directory: ./terraform
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v2
+      with:
+        terraform_version: ${{ env.TF_VERSION }}
+        terraform_wrapper: false
+
+    - name: Terraform Init
+      run: |
+        terraform init \
+          -backend-config="resource_group_name=${{ secrets.TF_STATE_RESOURCE_GROUP }}" \
+          -backend-config="storage_account_name=${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" \
+          -backend-config="container_name=${{ secrets.TF_STATE_CONTAINER }}" \
+          -backend-config="key=${{ secrets.TF_STATE_KEY }}"
+
+    - name: Terraform Validate
+      run: terraform validate
+
     - name: Terraform Plan Destroy
       run: |
+        echo "Planning destruction..."
         terraform plan -destroy \
           -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
           -var="database_admin_password=${{ secrets.DATABASE_ADMIN_PASSWORD }}" \
-          -out=destroy-plan
-      env:
-        TF_VAR_environment: "production"
-        TF_VAR_project_name: "retoucherirving"
+          -out=destroy-plan \
+          -detailed-exitcode
+        
+        echo "Destruction plan created"
 
-    - name: Terraform Destroy
-      run: terraform apply -auto-approve destroy-plan
+    - name: Upload Destroy Plan Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: terraform-destroy-plan-${{ github.run_number }}
+        path: terraform/destroy-plan
+        retention-days: 90  # Keep destroy plans longer for audit
 
-    - name: Cleanup Summary
+    - name: Final Confirmation Check
       run: |
-        echo "## 🗑️ Infrastructure Destroyed" >> $GITHUB_STEP_SUMMARY
-        echo "All Azure resources have been successfully destroyed." >> $GITHUB_STEP_SUMMARY
-        echo "- Resource Group: Deleted" >> $GITHUB_STEP_SUMMARY
-        echo "- AKS Cluster: Deleted" >> $GITHUB_STEP_SUMMARY
-        echo "- Database: Deleted" >> $GITHUB_STEP_SUMMARY
-        echo "- Monitoring: Deleted" >> $GITHUB_STEP_SUMMARY
+        echo "FINAL SAFETY CHECK"
+        echo "About to destroy infrastructure for: ${{ needs.inventory.outputs.resource_group }}"
+        echo "This action is IRREVERSIBLE!"
+        
+        # Double-check all confirmations one more time
+        if [ "${{ github.event.inputs.confirm_destroy }}" != "DESTROY" ] || [ "${{ github.event.inputs.backup_confirmation }}" != "yes" ]; then
+          echo "Safety check failed at final confirmation"
+          exit 1
+        fi
+        
+        echo " Final safety check passed. Proceeding with destruction..."
+
+    - name: Execute Terraform Destroy
+      run: |
+        echo " DESTROYING INFRASTRUCTURE..."
+        echo "Started at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+        
+        terraform apply -auto-approve destroy-plan
+        
+        echo "Terraform destroy completed at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+
+    - name: Verify Destruction
+      run: |
+        echo " Verifying all resources are destroyed..."
+        
+        # Check if state file shows any remaining resources
+        REMAINING_RESOURCES=$(terraform show -json | jq '.values.root_module.resources | length' 2>/dev/null || echo "0")
+        
+        if [ "$REMAINING_RESOURCES" -eq 0 ]; then
+          echo "All resources successfully destroyed"
+          echo "DESTRUCTION_STATUS=SUCCESS" >> $GITHUB_ENV
+        else
+          echo "Warning: Some resources may still exist"
+          echo "DESTRUCTION_STATUS=PARTIAL" >> $GITHUB_ENV
+        fi
+
+    #  POST-DESTRUCTION CLEANUP
+    - name: Azure Resource Verification
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+      continue-on-error: true
+
+    - name: Azure Cleanup Verification
+      continue-on-error: true
+      run: |
+        echo " Verifying Azure resource cleanup..."
+        
+        # Check if resource group still exists
+        RG_EXISTS=$(az group exists --name "${{ needs.inventory.outputs.resource_group }}" 2>/dev/null || echo "false")
+        
+        if [ "$RG_EXISTS" = "false" ]; then
+          echo "Resource group successfully deleted"
+          echo "AZURE_CLEANUP=SUCCESS" >> $GITHUB_ENV
+        else
+          echo " Resource group may still exist - manual cleanup may be required"
+          echo "AZURE_CLEANUP=PARTIAL" >> $GITHUB_ENV
+        fi
+
+    - name: Generate Destruction Report
+      run: |
+        echo "##  INFRASTRUCTURE DESTRUCTION COMPLETED" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "###  Destruction Status: **${{ env.DESTRUCTION_STATUS }}**" >> $GITHUB_STEP_SUMMARY
+        echo "###  Azure Cleanup: **${{ env.AZURE_CLEANUP }}**" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "###  Resources Destroyed:" >> $GITHUB_STEP_SUMMARY
+        echo "- **Resource Group:** ${{ needs.inventory.outputs.resource_group }} " >> $GITHUB_STEP_SUMMARY
+        echo "- **AKS Cluster:** ${{ needs.inventory.outputs.aks_cluster }} " >> $GITHUB_STEP_SUMMARY
+        echo "- **Container Registry:** ${{ needs.inventory.outputs.acr_login_server }} " >> $GITHUB_STEP_SUMMARY
+        echo "- **Database:** ${{ needs.inventory.outputs.database_fqdn }} " >> $GITHUB_STEP_SUMMARY
+        echo "- **All Storage Accounts** " >> $GITHUB_STEP_SUMMARY
+        echo "- **All Key Vaults** " >> $GITHUB_STEP_SUMMARY
+        echo "- **All Network Resources** " >> $GITHUB_STEP_SUMMARY
+        echo "- **All Monitoring Resources** " >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "###  Timeline:" >> $GITHUB_STEP_SUMMARY
+        echo "- **Started:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+        echo "- **Completed:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "###  Recovery Options:" >> $GITHUB_STEP_SUMMARY
+        echo "- **Redeploy Infrastructure:** Use the 'Deploy Infrastructure' workflow" >> $GITHUB_STEP_SUMMARY
+        echo "- **Estimated Recovery Time:** 45-60 minutes" >> $GITHUB_STEP_SUMMARY
+        echo "- **Data Recovery:** Restore from backups (if available)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "###  Next Steps:" >> $GITHUB_STEP_SUMMARY
+        echo "1. Verify domain DNS settings (may need reconfiguration)" >> $GITHUB_STEP_SUMMARY
+        echo "2. Confirm all backups are accessible" >> $GITHUB_STEP_SUMMARY
+        echo "3. Update any external systems that referenced destroyed resources" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "---" >> $GITHUB_STEP_SUMMARY
+        echo "** Infrastructure destruction completed successfully!**" >> $GITHUB_STEP_SUMMARY
+
+    outputs:
+      destruction_status: ${{ env.DESTRUCTION_STATUS }}
+      azure_cleanup_status: ${{ env.AZURE_CLEANUP }}
+
+
+
+
+# name: Destroy Infrastructure
+
+# on:
+#   workflow_dispatch:
+#     inputs:
+#       confirm_destroy:
+#         description: 'Type "DESTROY" to confirm infrastructure destruction'
+#         required: true
+#         type: string
+
+# env:
+#   TF_VERSION: '1.5.0'
+#   ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+#   ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+#   ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+#   ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+
+# jobs:
+#   terraform-destroy:
+#     name: 'Terraform Destroy'
+#     runs-on: ubuntu-latest
+#     environment: production
+    
+#     defaults:
+#       run:
+#         shell: bash
+#         working-directory: ./terraform
+
+#     steps:
+#     - name: Checkout
+#       uses: actions/checkout@v4
+
+#     - name: Validate Destruction Confirmation
+#       working-directory: .
+#       run: |
+#         if [ "${{ github.event.inputs.confirm_destroy }}" != "DESTROY" ]; then
+#           echo "❌ Destruction not confirmed. You must type 'DESTROY' exactly."
+#           exit 1
+#         fi
+#         echo "✅ Destruction confirmed"
+
+#     - name: Setup Terraform
+#       uses: hashicorp/setup-terraform@v2
+#       with:
+#         terraform_version: ${{ env.TF_VERSION }}
+#         terraform_wrapper: false
+
+#     - name: Terraform Init
+#       run: |
+#         terraform init \
+#           -backend-config="resource_group_name=${{ secrets.TF_STATE_RESOURCE_GROUP }}" \
+#           -backend-config="storage_account_name=${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" \
+#           -backend-config="container_name=${{ secrets.TF_STATE_CONTAINER }}" \
+#           -backend-config="key=${{ secrets.TF_STATE_KEY }}"
+
+#     - name: Terraform Plan Destroy
+#       run: |
+#         terraform plan -destroy \
+#           -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+#           -var="database_admin_password=${{ secrets.DATABASE_ADMIN_PASSWORD }}" \
+#           -out=destroy-plan
+#       env:
+#         TF_VAR_environment: "production"
+#         TF_VAR_project_name: "retoucherirving"
+
+#     - name: Terraform Destroy
+#       run: terraform apply -auto-approve destroy-plan
+
+#     - name: Cleanup Summary
+#       run: |
+#         echo "## 🗑️ Infrastructure Destroyed" >> $GITHUB_STEP_SUMMARY
+#         echo "All Azure resources have been successfully destroyed." >> $GITHUB_STEP_SUMMARY
+#         echo "- Resource Group: Deleted" >> $GITHUB_STEP_SUMMARY
+#         echo "- AKS Cluster: Deleted" >> $GITHUB_STEP_SUMMARY
+#         echo "- Database: Deleted" >> $GITHUB_STEP_SUMMARY
+#         echo "- Monitoring: Deleted" >> $GITHUB_STEP_SUMMARY

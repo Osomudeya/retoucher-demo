@@ -46,8 +46,10 @@ sudo apt-get install -y helm
 
 # Install cert-manager CLI
 curl -L -o cmctl.tar.gz https://github.com/cert-manager/cert-manager/releases/latest/download/cmctl-linux-amd64.tar.gz
-tar xzf cmctl.tar.gz
+tar -xzf cmctl.tar.gz
+chmod +x cmctl
 sudo mv cmctl /usr/local/bin
+rm cmctl.tar.gz
 
 # Create working directory
 mkdir -p ~/deployments

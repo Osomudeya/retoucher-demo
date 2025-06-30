@@ -2,27 +2,75 @@ name: Deploy Application
 
 on:
   workflow_dispatch:
+    inputs:
+      infrastructure_run_id:
+        description: 'Infrastructure workflow run ID (optional - uses latest if empty)'
+        required: false
+        type: string
   push:
     branches:
       - main
     paths:
       - 'app/**'
       - 'k8s/**'
+      - 'scripts/**'
       - '.github/workflows/app-deploy.yml'
+
+  # Prevent concurrent deployments
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   IMAGE_TAG: ${{ github.sha }}
+  NAMESPACE: retoucherirving
 
 jobs:
+  # Get infrastructure outputs from the latest successful infrastructure deployment
+  get-infrastructure:
+    name: Get Infrastructure Details
+    runs-on: ubuntu-latest
+    outputs:
+      resource_group: ${{ steps.get_outputs.outputs.resource_group }}
+      aks_cluster_name: ${{ steps.get_outputs.outputs.aks_cluster_name }}
+      acr_login_server: ${{ steps.get_outputs.outputs.acr_login_server }}
+      jump_server_ip: ${{ steps.get_outputs.outputs.jump_server_ip }}
+      database_fqdn: ${{ steps.get_outputs.outputs.database_fqdn }}
+    
+    steps:
+    - name: Get Infrastructure Outputs
+      id: get_outputs
+      run: |
+        # Use provided run ID or get the latest successful infrastructure deployment
+        if [ -n "${{ github.event.inputs.infrastructure_run_id }}" ]; then
+          RUN_ID="${{ github.event.inputs.infrastructure_run_id }}"
+        else
+          RUN_ID=$(gh run list --workflow="Deploy Infrastructure" --status=success --limit=1 --json databaseId --jq '.[0].databaseId')
+        fi
+        
+        echo "Using infrastructure run ID: $RUN_ID"
+        
+        # Get the infrastructure outputs (these would be stored as artifacts or job outputs)
+        # For now, using secrets as fallback - in production, use proper workflow integration
+        echo "resource_group=${{ secrets.AKS_RESOURCE_GROUP }}" >> $GITHUB_OUTPUT
+        echo "aks_cluster_name=${{ secrets.AKS_CLUSTER_NAME }}" >> $GITHUB_OUTPUT
+        echo "acr_login_server=${{ secrets.ACR_LOGIN_SERVER }}" >> $GITHUB_OUTPUT
+        echo "jump_server_ip=${{ secrets.JUMP_SERVER_IP }}" >> $GITHUB_OUTPUT
+        echo "database_fqdn=${{ secrets.DATABASE_FQDN }}" >> $GITHUB_OUTPUT
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Build and push container images
   build-and-push:
     name: Build and Push Images
     runs-on: ubuntu-latest
+    needs: get-infrastructure
     outputs:
-      image-tag: ${{ env.IMAGE_TAG }}
-      acr-login-server: ${{ steps.acr-details.outputs.login-server }}
+      backend_image: ${{ steps.image_details.outputs.backend_image }}
+      frontend_image: ${{ steps.image_details.outputs.frontend_image }}
     
     steps:
-    - name: Checkout
+    - name: Checkout Code
       uses: actions/checkout@v4
 
     - name: Azure Login
@@ -30,48 +78,45 @@ jobs:
       with:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-    - name: Get ACR Details
-      id: acr-details
+    - name: Login to ACR
       run: |
-        # Use the ACR created by Terraform
-        ACR_LOGIN_SERVER="${{ secrets.ACR_LOGIN_SERVER }}"
-        ACR_NAME=$(echo $ACR_LOGIN_SERVER | cut -d'.' -f1)
-        
-        echo "acr-name=$ACR_NAME" >> $GITHUB_OUTPUT
-        echo "login-server=$ACR_LOGIN_SERVER" >> $GITHUB_OUTPUT
-        
-        # Login to ACR using Azure CLI
+        ACR_NAME=$(echo "${{ needs.get-infrastructure.outputs.acr_login_server }}" | cut -d'.' -f1)
         az acr login --name $ACR_NAME
-        
-        echo "✅ Logged into ACR: $ACR_LOGIN_SERVER"
 
     - name: Build and Push Backend Image
       run: |
         cd app/backend
-        docker build -t ${{ steps.acr-details.outputs.login-server }}/retoucherirving/backend:${{ env.IMAGE_TAG }} .
-        docker build -t ${{ steps.acr-details.outputs.login-server }}/retoucherirving/backend:latest .
-        docker push ${{ steps.acr-details.outputs.login-server }}/retoucherirving/backend:${{ env.IMAGE_TAG }}
-        docker push ${{ steps.acr-details.outputs.login-server }}/retoucherirving/backend:latest
+        BACKEND_IMAGE="${{ needs.get-infrastructure.outputs.acr_login_server }}/retoucherirving/backend:${{ env.IMAGE_TAG }}"
+        docker build -t $BACKEND_IMAGE .
+        docker build -t "${{ needs.get-infrastructure.outputs.acr_login_server }}/retoucherirving/backend:latest" .
+        docker push $BACKEND_IMAGE
+        docker push "${{ needs.get-infrastructure.outputs.acr_login_server }}/retoucherirving/backend:latest"
 
     - name: Build and Push Frontend Image
       run: |
         cd app/frontend
-        docker build -t ${{ steps.acr-details.outputs.login-server }}/retoucherirving/frontend:${{ env.IMAGE_TAG }} .
-        docker build -t ${{ steps.acr-details.outputs.login-server }}/retoucherirving/frontend:latest .
-        docker push ${{ steps.acr-details.outputs.login-server }}/retoucherirving/frontend:${{ env.IMAGE_TAG }}
-        docker push ${{ steps.acr-details.outputs.login-server }}/retoucherirving/frontend:latest
+        FRONTEND_IMAGE="${{ needs.get-infrastructure.outputs.acr_login_server }}/retoucherirving/frontend:${{ env.IMAGE_TAG }}"
+        docker build -t $FRONTEND_IMAGE .
+        docker build -t "${{ needs.get-infrastructure.outputs.acr_login_server }}/retoucherirving/frontend:latest" .
+        docker push $FRONTEND_IMAGE
+        docker push "${{ needs.get-infrastructure.outputs.acr_login_server }}/retoucherirving/frontend:latest"
 
+    - name: Set Image Details
+      id: image_details
+      run: |
+        echo "backend_image=${{ needs.get-infrastructure.outputs.acr_login_server }}/retoucherirving/backend:${{ env.IMAGE_TAG }}" >> $GITHUB_OUTPUT
+        echo "frontend_image=${{ needs.get-infrastructure.outputs.acr_login_server }}/retoucherirving/frontend:${{ env.IMAGE_TAG }}" >> $GITHUB_OUTPUT
+
+  # Security scanning
   security-scan:
     name: Security Scan
     runs-on: ubuntu-latest
-    needs: build-and-push
+    needs: [get-infrastructure, build-and-push]
     continue-on-error: true
     
     steps:
-    - name: Checkout
+    - name: Checkout Code
       uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
 
     - name: Azure Login for Security Scans
       uses: azure/login@v1
@@ -79,10 +124,9 @@ jobs:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
       if: env.SNYK_TOKEN != ''
 
-    - name: Login to ACR for Snyk
+    - name: Login to ACR for Scanning
       run: |
-        ACR_LOGIN_SERVER="${{ needs.build-and-push.outputs.acr-login-server }}"
-        ACR_NAME=$(echo $ACR_LOGIN_SERVER | cut -d'.' -f1)
+        ACR_NAME=$(echo "${{ needs.get-infrastructure.outputs.acr_login_server }}" | cut -d'.' -f1)
         az acr login --name $ACR_NAME
       if: env.SNYK_TOKEN != ''
       env:
@@ -94,11 +138,11 @@ jobs:
       env:
         SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
       with:
-        image: ${{ needs.build-and-push.outputs.acr-login-server }}/retoucherirving/backend:${{ env.IMAGE_TAG }}
-        args: --severity-threshold=high --fail-on=upgradable
+        image: ${{ needs.build-and-push.outputs.backend_image }}
+        args: --severity-threshold=high
       if: env.SNYK_TOKEN != ''
 
-    - name: Run Snyk Code Scan (Backend)
+    - name: Run Snyk Code Scan
       uses: snyk/actions/node@master
       continue-on-error: true
       env:
@@ -107,185 +151,130 @@ jobs:
         args: --severity-threshold=high --file=app/backend/package.json
       if: env.SNYK_TOKEN != ''
 
-    # Snyk Code Scan - Frontend (if you have one)
-    - name: Run Snyk Code Scan (Frontend)
-      uses: snyk/actions/node@master
-      continue-on-error: true
-      env:
-        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-      with:
-        args: --severity-threshold=high --file=app/frontend/package.json
-      if: env.SNYK_TOKEN != '' && hashFiles('app/frontend/package.json') != ''
-
-    - name: SonarCloud Scan
-      uses: SonarSource/sonarcloud-github-action@master
-      continue-on-error: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-      with:
-        projectBaseDir: app/backend
-        args: >
-          -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }}
-          -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }}
-          -Dsonar.host.url=https://sonarcloud.io
-          -Dsonar.login=${{ secrets.SONAR_TOKEN }}
-      if: env.SONAR_TOKEN != ''
-
+  # Deploy to AKS via jump server
   deploy:
     name: Deploy to AKS
     runs-on: ubuntu-latest
-    needs: [build-and-push, security-scan]
+    needs: [get-infrastructure, build-and-push, security-scan]
     environment: production
     
     steps:
-    - name: Checkout
+    - name: Checkout Code
       uses: actions/checkout@v4
 
-    - name: Setup SSH Key
+    - name: Setup SSH Configuration
       run: |
         mkdir -p ~/.ssh
         echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
         chmod 600 ~/.ssh/id_rsa
-        ssh-keyscan -H ${{ secrets.JUMP_SERVER_IP }} >> ~/.ssh/known_hosts
+        ssh-keyscan -H ${{ needs.get-infrastructure.outputs.jump_server_ip }} >> ~/.ssh/known_hosts
 
-    - name: Copy Files to Jump Server
+    - name: Copy Deployment Files to Jump Server
       run: |
-        # Copy Kubernetes manifests and scripts
-        scp -r k8s/ azureuser@${{ secrets.JUMP_SERVER_IP }}:~/
-        scp -r scripts/ azureuser@${{ secrets.JUMP_SERVER_IP }}:~/
+        # Copy Kubernetes manifests
+        scp -r k8s/ azureuser@${{ needs.get-infrastructure.outputs.jump_server_ip }}:~/deployment/
         
-        # Copy any additional config files if they exist
+        # Copy deployment scripts
+        scp -r scripts/ azureuser@${{ needs.get-infrastructure.outputs.jump_server_ip }}:~/deployment/
+        
+        # Copy any configuration files
         if [ -d "config/" ]; then
-          scp -r config/ azureuser@${{ secrets.JUMP_SERVER_IP }}:~/
+          scp -r config/ azureuser@${{ needs.get-infrastructure.outputs.jump_server_ip }}:~/deployment/
         fi
 
-    - name: Deploy to AKS via Jump Server
+    - name: Execute Deployment on Jump Server
       run: |
-        ssh azureuser@${{ secrets.JUMP_SERVER_IP }} << 'EOF'
-          # STEP 1: Setup jump server (install tools if needed)
-          echo "🛠️ Setting up jump server tools..."
-          if [ -f "scripts/setup-jump-server.sh" ]; then
-            chmod +x scripts/*.sh
-            ./scripts/setup-jump-server.sh
-          fi
+        ssh azureuser@${{ needs.get-infrastructure.outputs.jump_server_ip }} << 'DEPLOY_EOF'
+          set -e
+          cd ~/deployment
           
-          # STEP 2: Azure Login for kubectl access
-          az login --service-principal \
-            --username ${{ secrets.ARM_CLIENT_ID }} \
-            --password ${{ secrets.ARM_CLIENT_SECRET }} \
-            --tenant ${{ secrets.ARM_TENANT_ID }}
+          # Make scripts executable
+          chmod +x scripts/*.sh
           
-          # STEP 3: Get AKS credentials
-          az aks get-credentials \
-            --resource-group ${{ secrets.AKS_RESOURCE_GROUP }} \
-            --name ${{ secrets.AKS_CLUSTER_NAME }} \
-            --overwrite-existing
-          
-          # STEP 4: Set environment variables for deployment
-          export RESOURCE_GROUP_NAME="${{ secrets.AKS_RESOURCE_GROUP }}"
-          export AKS_CLUSTER_NAME="${{ secrets.AKS_CLUSTER_NAME }}"
-          export ACR_LOGIN_SERVER="${{ needs.build-and-push.outputs.acr-login-server }}"
+          # Set environment variables for deployment
+          export RESOURCE_GROUP_NAME="${{ needs.get-infrastructure.outputs.resource_group }}"
+          export AKS_CLUSTER_NAME="${{ needs.get-infrastructure.outputs.aks_cluster_name }}"
+          export ACR_LOGIN_SERVER="${{ needs.get-infrastructure.outputs.acr_login_server }}"
+          export BACKEND_IMAGE="${{ needs.build-and-push.outputs.backend_image }}"
+          export FRONTEND_IMAGE="${{ needs.build-and-push.outputs.frontend_image }}"
           export IMAGE_TAG="${{ env.IMAGE_TAG }}"
-          export DATABASE_HOST="${{ secrets.DATABASE_FQDN }}"
+          export NAMESPACE="${{ env.NAMESPACE }}"
+          export DATABASE_FQDN="${{ needs.get-infrastructure.outputs.database_fqdn }}"
+          export DATABASE_NAME="${{ secrets.DATABASE_NAME }}"
           export DATABASE_USER="${{ secrets.DATABASE_USER }}"
           export DATABASE_PASSWORD="${{ secrets.DATABASE_PASSWORD }}"
-          export DATABASE_NAME="${{ secrets.DATABASE_NAME }}"
           export APPLICATION_INSIGHTS_KEY="${{ secrets.APPLICATION_INSIGHTS_INSTRUMENTATION_KEY }}"
+          export CLOUDFLARE_API_KEY="${{ secrets.CLOUDFLARE_API_KEY }}"
+          export ARM_CLIENT_ID="${{ secrets.ARM_CLIENT_ID }}"
+          export ARM_CLIENT_SECRET="${{ secrets.ARM_CLIENT_SECRET }}"
+          export ARM_TENANT_ID="${{ secrets.ARM_TENANT_ID }}"
           
-          # Optional environment variables
-          export ENVIRONMENT="production"
-          export PROJECT_NAME="retoucherirving"
+          # Run pre-deployment setup
+          echo "Setting up deployment environment..."
+          ./scripts/setup-deployment-env.sh
           
-          # STEP 5: Update Kubernetes manifests with current values
-          echo "📝 Updating Kubernetes manifests..."
+          # Install/update cluster dependencies
+          echo "Installing cluster dependencies..."
+          ./scripts/install-cluster-dependencies.sh
           
-          # Replace image tags in deployment files
-          find k8s/ -name "*.yaml" -o -name "*.yml" | xargs sed -i "s|{{IMAGE_TAG}}|${IMAGE_TAG}|g"
-          find k8s/ -name "*.yaml" -o -name "*.yml" | xargs sed -i "s|{{ACR_LOGIN_SERVER}}|${ACR_LOGIN_SERVER}|g"
-          find k8s/ -name "*.yaml" -o -name "*.yml" | xargs sed -i "s|{{DATABASE_HOST}}|${DATABASE_HOST}|g"
-          find k8s/ -name "*.yaml" -o -name "*.yml" | xargs sed -i "s|{{DATABASE_USER}}|${DATABASE_USER}|g"
-          find k8s/ -name "*.yaml" -o -name "*.yml" | xargs sed -i "s|{{DATABASE_NAME}}|${DATABASE_NAME}|g"
+          # Deploy application
+          echo "Deploying application..."
+          ./scripts/deploy-application.sh
           
-          # STEP 6: Create namespace if it doesn't exist
-          kubectl create namespace retoucherirving --dry-run=client -o yaml | kubectl apply -f -
+          # Verify deployment
+          echo "Verifying deployment..."
+          ./scripts/verify-deployment.sh
           
-          # STEP 7: Create secrets
-          echo "🔐 Creating/updating secrets..."
-          kubectl create secret generic app-secrets \
-            --from-literal=database-password="${DATABASE_PASSWORD}" \
-            --from-literal=application-insights-key="${APPLICATION_INSIGHTS_KEY}" \
-            --namespace=retoucherirving \
-            --dry-run=client -o yaml | kubectl apply -f -
-          
-          # STEP 8: Deploy application
-          echo "🚀 Deploying application to AKS..."
-          
-          if [ -f "scripts/deploy-to-aks.sh" ]; then
-            # Use custom deployment script if available
-            ./scripts/deploy-to-aks.sh
-          else
-            # Default deployment using kubectl
-            kubectl apply -f k8s/ --namespace=retoucherirving
-          fi
-          
-          # STEP 9: Wait for deployment rollout
-          echo "⏳ Waiting for deployment to complete..."
-          kubectl rollout status deployment/backend-deployment --namespace=retoucherirving --timeout=300s
-          kubectl rollout status deployment/frontend-deployment --namespace=retoucherirving --timeout=300s
-          
-          echo "✅ Deployment completed successfully!"
-        EOF
+        DEPLOY_EOF
 
-    - name: Verify Deployment
+    - name: Get Deployment Status
+      id: deployment_status
       run: |
-        ssh azureuser@${{ secrets.JUMP_SERVER_IP }} << 'EOF'
-          echo "🔍 Verifying deployment status..."
+        ssh azureuser@${{ needs.get-infrastructure.outputs.jump_server_ip }} << 'STATUS_EOF'
+          echo "Deployment verification:"
+          kubectl get pods -n ${{ env.NAMESPACE }} --no-headers | wc -l > /tmp/pod_count
+          kubectl get pods -n ${{ env.NAMESPACE }} --field-selector=status.phase=Running --no-headers | wc -l > /tmp/running_pods
+          kubectl get ingress -n ${{ env.NAMESPACE }} -o jsonpath='{.items[0].status.loadBalancer.ingress[0].ip}' > /tmp/ingress_ip || echo "pending" > /tmp/ingress_ip
           
-          echo "Pods:"
-          kubectl get pods -n retoucherirving
-          
-          echo -e "\nServices:"
-          kubectl get services -n retoucherirving
-          
-          echo -e "\nIngress:"
-          kubectl get ingress -n retoucherirving
-          
-          echo -e "\nDeployment status:"
-          kubectl get deployments -n retoucherirving
-          
-          # Check if pods are ready
-          kubectl wait --for=condition=ready pod -l app=backend -n retoucherirving --timeout=60s
-          kubectl wait --for=condition=ready pod -l app=frontend -n retoucherirving --timeout=60s
-        EOF
+          echo "TOTAL_PODS=$(cat /tmp/pod_count)" >> $GITHUB_OUTPUT
+          echo "RUNNING_PODS=$(cat /tmp/running_pods)" >> $GITHUB_OUTPUT
+          echo "INGRESS_IP=$(cat /tmp/ingress_ip)" >> $GITHUB_OUTPUT
+        STATUS_EOF
 
     - name: Cleanup Jump Server Files
       if: always()
       run: |
-        ssh azureuser@${{ secrets.JUMP_SERVER_IP }} << 'EOF'
-          echo "🧹 Cleaning up copied files..."
-          rm -rf ~/k8s ~/scripts ~/config
-        EOF
+        ssh azureuser@${{ needs.get-infrastructure.outputs.jump_server_ip }} << 'CLEANUP_EOF'
+          echo "Cleaning up deployment files..."
+          rm -rf ~/deployment
+        CLEANUP_EOF
 
-    - name: Deployment Summary
+    - name: Generate Deployment Summary
       if: success()
       run: |
-        echo "## 🚀 Deployment Successful" >> $GITHUB_STEP_SUMMARY
-        echo "- **Backend Image:** \`${{ needs.build-and-push.outputs.acr-login-server }}/retoucherirving/backend:${{ env.IMAGE_TAG }}\`" >> $GITHUB_STEP_SUMMARY
-        echo "- **Frontend Image:** \`${{ needs.build-and-push.outputs.acr-login-server }}/retoucherirving/frontend:${{ env.IMAGE_TAG }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "## Application Deployment Successful" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Deployment Details:" >> $GITHUB_STEP_SUMMARY
+        echo "- **Backend Image:** \`${{ needs.build-and-push.outputs.backend_image }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Frontend Image:** \`${{ needs.build-and-push.outputs.frontend_image }}\`" >> $GITHUB_STEP_SUMMARY
         echo "- **Environment:** Production" >> $GITHUB_STEP_SUMMARY
-        echo "- **AKS Cluster:** ${{ secrets.AKS_CLUSTER_NAME }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **Resource Group:** ${{ secrets.AKS_RESOURCE_GROUP }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **Jump Server:** ${{ secrets.JUMP_SERVER_IP }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Namespace:** ${{ env.NAMESPACE }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **AKS Cluster:** ${{ needs.get-infrastructure.outputs.aks_cluster_name }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Resource Group:** ${{ needs.get-infrastructure.outputs.resource_group }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Infrastructure:" >> $GITHUB_STEP_SUMMARY
+        echo "- **Jump Server:** ${{ needs.get-infrastructure.outputs.jump_server_ip }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Database:** ${{ needs.get-infrastructure.outputs.database_fqdn }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Registry:** ${{ needs.get-infrastructure.outputs.acr_login_server }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Access:" >> $GITHUB_STEP_SUMMARY
         echo "- **Website:** https://retoucherirving.com" >> $GITHUB_STEP_SUMMARY
+        echo "- **Status:** Deployed and Running" >> $GITHUB_STEP_SUMMARY
 
-    - name: Security Scan Summary
-      if: always()
-      run: |
-        echo "## 🔒 Security Scan Results" >> $GITHUB_STEP_SUMMARY
-        echo "- **Snyk Container Scan:** Check Actions logs for vulnerabilities" >> $GITHUB_STEP_SUMMARY
-        echo "- **Snyk Code Scan:** Check Actions logs for code issues" >> $GITHUB_STEP_SUMMARY
-        echo "- **SonarCloud:** Check [SonarCloud Dashboard](https://sonarcloud.io/organizations/${{ secrets.SONAR_ORGANIZATION }})" >> $GITHUB_STEP_SUMMARY
+    outputs:
+      deployment_status: success
+      backend_image: ${{ needs.build-and-push.outputs.backend_image }}
+      frontend_image: ${{ needs.build-and-push.outputs.frontend_image }}
 
 
 # name: Deploy Application

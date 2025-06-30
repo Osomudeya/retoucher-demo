@@ -9,20 +9,20 @@ resource "azurerm_kubernetes_cluster" "main" {
 
   node_resource_group     = "rg-aks-nodes-${var.project_name}-${var.environment}"
   private_cluster_enabled = true
-  
+
   identity {
     type = "SystemAssigned"
   }
 
   default_node_pool {
-    name                = "default"
-    vm_size             = var.vm_size
-    vnet_subnet_id      = var.aks_subnet_id
-    min_count           = null
-    max_count           = null
-    node_count          = var.node_count
-    os_disk_type        = "Managed"
-    type                = "VirtualMachineScaleSets"
+    name           = "default"
+    vm_size        = var.vm_size
+    vnet_subnet_id = var.aks_subnet_id
+    min_count      = null
+    max_count      = null
+    node_count     = var.node_count
+    os_disk_type   = "Managed"
+    type           = "VirtualMachineScaleSets"
   }
 
   network_profile {
@@ -36,7 +36,7 @@ resource "azurerm_kubernetes_cluster" "main" {
   }
 
   azure_policy_enabled = true
-  tags = var.tags
+  tags                 = var.tags
 }
 
 # Role assignment for ACR access
@@ -44,7 +44,7 @@ resource "azurerm_role_assignment" "aks_acr" {
   count                            = var.create_role_assignments ? 1 : 0
   principal_id                     = azurerm_kubernetes_cluster.main.kubelet_identity[0].object_id
   role_definition_name             = "AcrPull"
-  scope                           = var.container_registry_id
+  scope                            = var.container_registry_id
   skip_service_principal_aad_check = true
 
   lifecycle {
@@ -66,7 +66,7 @@ resource "azurerm_role_assignment" "aks_acr" {
 
 #   node_resource_group     = "rg-aks-nodes-${var.project_name}-${var.environment}"
 #   private_cluster_enabled = true
-  
+
 #   identity {
 #     type = "SystemAssigned"
 #   }

@@ -19,7 +19,7 @@ spec:
     spec:
       containers:
       - name: frontend
-        image: # This will be set by CI/CD pipeline
+        image: placeholder-image:latest  # This will be set by CI/CD pipeline
         ports:
         - containerPort: 80
           name: http

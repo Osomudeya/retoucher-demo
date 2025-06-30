@@ -3,40 +3,40 @@
 # Log Analytics Workspace
 resource "azurerm_log_analytics_workspace" "main" {
   name                = "law-${var.project_name}-${var.environment}-${var.resource_suffix}"
-  location           = var.location
+  location            = var.location
   resource_group_name = var.resource_group_name
-  sku                = "PerGB2018"
-  retention_in_days  = 30
-  tags              = var.tags
+  sku                 = "PerGB2018"
+  retention_in_days   = 30
+  tags                = var.tags
 }
 
 # Application Insights
 resource "azurerm_application_insights" "main" {
   name                = "appi-${var.project_name}-${var.environment}-${var.resource_suffix}"
-  location           = var.location
+  location            = var.location
   resource_group_name = var.resource_group_name
-  workspace_id       = azurerm_log_analytics_workspace.main.id
-  application_type   = "web"
-  tags              = var.tags
+  workspace_id        = azurerm_log_analytics_workspace.main.id
+  application_type    = "web"
+  tags                = var.tags
 }
 
 # Azure Managed Grafana - FIXED VERSION
 resource "azurerm_dashboard_grafana" "main" {
-  name                              = "grafana-${var.resource_suffix}"
-  resource_group_name               = var.resource_group_name
-  location                         = var.location
-  
-  grafana_major_version            = "11"
-  sku                              = "Standard"
-  
-  api_key_enabled                  = true
+  name                = "grafana-${var.resource_suffix}"
+  resource_group_name = var.resource_group_name
+  location            = var.location
+
+  grafana_major_version = "11"
+  sku                   = "Standard"
+
+  api_key_enabled                   = true
   deterministic_outbound_ip_enabled = true
-  public_network_access_enabled    = true
-  
+  public_network_access_enabled     = true
+
   identity {
     type = "SystemAssigned"
   }
-  
+
   tags = var.tags
 }
 
@@ -58,14 +58,14 @@ resource "azurerm_role_assignment" "grafana_reader" {
 # Add user access to Grafana (replace with your actual user ID)
 resource "azurerm_role_assignment" "grafana_user_viewer" {
   scope                = azurerm_dashboard_grafana.main.id
-  role_definition_name = "Grafana Editor"  
+  role_definition_name = "Grafana Editor"
   principal_id         = "060d3bb8-cafc-4833-92c1-0e50cdcaad92"
 }
 
 # Fallback: Create role assignment via Azure CLI
 # resource "terraform_data" "grafana_role_fallback" {
 #   count = var.create_role_assignments ? 0 : 1
-  
+
 #   triggers_replace = {
 #     grafana_id = azurerm_dashboard_grafana.main.id
 #     subscription_id = data.azurerm_client_config.current.subscription_id
@@ -88,12 +88,12 @@ resource "azurerm_monitor_action_group" "main" {
   name                = "actiongroup-${var.project_name}-${var.environment}"
   resource_group_name = var.resource_group_name
   short_name          = "webapp-ag"
-  
+
   email_receiver {
     name          = "admin"
     email_address = "admin@${var.project_name}.com"
   }
-  
+
   tags = var.tags
 }
 

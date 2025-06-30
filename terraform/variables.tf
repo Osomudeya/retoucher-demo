@@ -65,3 +65,24 @@ variable "create_role_assignments" {
   type        = bool
   default     = true # Default to false to avoid permission issues
 }
+
+variable "arm_client_id" {
+  description = "Azure Service Principal Client ID"
+  type        = string
+}
+
+variable "arm_client_secret" {
+  description = "Azure Service Principal Client Secret"
+  type        = string
+  sensitive   = true
+}
+
+variable "arm_tenant_id" {
+  description = "Azure Tenant ID"
+  type        = string
+}
+
+variable "arm_subscription_id" {
+  description = "Azure Tenant ID"
+  type        = string
+}
