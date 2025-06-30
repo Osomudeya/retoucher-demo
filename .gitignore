@@ -43,3 +43,8 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+test-local.sh
+deploy-local.sh
+get-github-secrets.sh
+Junk/
