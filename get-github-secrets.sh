@@ -124,7 +124,7 @@ DB_FQDN=$(az postgres flexible-server list --resource-group "$RESOURCE_GROUP" --
 if [ -n "$DB_FQDN" ]; then
     SECRETS["DATABASE_HOST"]="$DB_FQDN"
     SECRETS["DATABASE_NAME"]="webapp"
-    SECRETS["DATABASE_USER"]="pgadmin"
+    SECRETS["DATABASE_USER"]="adminuser"
     SECRETS["DATABASE_PASSWORD"]="[SAME_AS_DATABASE_ADMIN_PASSWORD]"
     echo "✅ Database: $DB_FQDN"
 else
